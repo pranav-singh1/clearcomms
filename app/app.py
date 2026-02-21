@@ -275,6 +275,21 @@ with tab_run:
     llm_out, llm_meta = cleanup_and_extract(raw_text, llm_cfg)
     cleaned = (llm_out.get("cleaned_transcript") or "").strip() or raw_text
 
+    # TTS (ONLINE) - do not let demo crash if offline
+    enable_tts = st.sidebar.checkbox("Text-to-speech (Deepgram) [ONLINE]", value=False)
+    deepgram_key = st.sidebar.text_input("Deepgram API Key", type="password", value=os.getenv("DEEPGRAM_API_KEY",""))
+    deepgram_voice = st.sidebar.text_input("Deepgram voice/model", value="aura-asteria-en")
+
+    if enable_tts:
+        try:
+            from pipeline.tts_deepgram import deepgram_tts_mp3
+            mp3_bytes = deepgram_tts_mp3(cleaned, deepgram_key, model=deepgram_voice)
+            st.subheader("Cleaned transcript (TTS)")
+            st.audio(mp3_bytes, format="audio/mp3")
+        except Exception as e:
+            st.warning(f"TTS failed (continuing): {e}")
+
+
     # Right pane: transcripts + card
     with colR:
         st.subheader("Status")
