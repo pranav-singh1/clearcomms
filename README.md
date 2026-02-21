@@ -245,6 +245,7 @@ ClearComms makes critical communication understandable and actionable in the exa
 
 * Streamlit run/install guide: [streamline.md](streamline.md)
 * Snapdragon setup checklist: [snapdragon_setup.md](snapdragon_setup.md)
+* Agent command runbook: [agent_runbook.md](agent_runbook.md)
 * Environment diagnostics:
 
 ```bash
