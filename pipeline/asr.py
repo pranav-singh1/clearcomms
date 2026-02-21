@@ -1,171 +1,152 @@
-"""
-pipeline/asr.py — Whisper via ONNX Runtime.
+"""pipeline/app.py
 
-Two backends, tried in order:
-  1. QNN-accelerated (Qualcomm hardware) via model.model
-  2. ONNX Runtime CPU via HuggingFace optimum (dev / fallback)
+ClearComms Streamlit UI (offline-first).
+
+This UI is intentionally simple and demo-focused:
+  - Upload an audio clip
+  - (Optional) apply a light "radio" preprocess (bandpass + gate)
+  - Run Whisper (QNN EP if ONNX encoder/decoder are present)
+  - Show transcript + latency + backend proof
+
+Run:
+    streamlit run app/app.py
 """
 
-import logging
+from __future__ import annotations
+
+import json
 import os
-import sys
+import tempfile
 import time
-import warnings
-
-# Suppress transformers/optimum deprecation noise before they're imported
-os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-for _logger_name in ("transformers", "optimum", "optimum.onnxruntime"):
-    logging.getLogger(_logger_name).setLevel(logging.ERROR)
-
-import numpy as np
-import yaml
 from pathlib import Path
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_CFG_PATH = _PROJECT_ROOT / "model" / "config.yaml"
+import numpy as np
+import streamlit as st
 
-_VARIANT_TO_HF = {
-    "base_en": "openai/whisper-base.en",
-    "small_en": "openai/whisper-small.en",
-    "medium_en": "openai/whisper-medium.en",
-    "large_en": "openai/whisper-large-v3",
-}
-
-_WHISPER_SR = 16_000  # Whisper expects 16 kHz
-
-# Lazy-loaded backend singleton
-_backend = None
+from pipeline.asr import transcribe
+from pipeline.enhance import enhance_audio
+from pipeline.audio_io import load_mono, normalize_peak, resample, save_wav, WHISPER_SR
 
 
-def _load_config():
-    with open(_CFG_PATH) as f:
-        return yaml.safe_load(f)
+_ROOT = Path(__file__).resolve().parent.parent
+_CFG = _ROOT / "model" / "config.yaml"
 
 
-def _resample(audio, orig_sr, target_sr):
-    """Resample audio to target sample rate using scipy."""
-    if orig_sr == target_sr:
-        return audio
-    from scipy.signal import resample
-
-    num_samples = int(len(audio) * target_sr / orig_sr)
-    return resample(audio, num_samples).astype(np.float32)
+def _model_files_present() -> bool:
+    enc = _ROOT / "models" / "WhisperEncoder.onnx"
+    dec = _ROOT / "models" / "WhisperDecoder.onnx"
+    return enc.exists() and dec.exists()
 
 
-def _init_backend():
-    global _backend
-    if _backend is not None:
+def run_streamlit_app() -> None:
+    st.set_page_config(page_title="ClearComms", layout="wide")
+    st.title("ClearComms — Offline Radio Transcription")
+
+    with st.sidebar:
+        st.header("Controls")
+        apply_radio_filter = st.checkbox(
+            "Apply radio preprocess (bandpass + light gate)",
+            value=True,
+            help="Not a denoiser model — just a fast DSP filter that often helps radio audio.",
+        )
+        normalize = st.checkbox("Normalize loudness (peak)", value=True)
+        st.caption("Whisper expects 16 kHz mono; we convert automatically.")
+
+        st.divider()
+        st.subheader("Model backend")
+        if _model_files_present():
+            st.success("Found ONNX encoder/decoder → QNN/NPU backend should load")
+        else:
+            st.warning(
+                "ONNX encoder/decoder not found in ./models. "
+                "ASR may fall back to HuggingFace ONNX export (requires internet the first time)."
+            )
+        st.caption("Config: model/config.yaml")
+
+    uploaded = st.file_uploader(
+        "Upload an audio clip (WAV recommended).",
+        type=["wav", "flac", "ogg", "mp3", "m4a"],
+    )
+
+    if not uploaded:
+        st.info(
+            "Upload a clip to run: upload → (optional) radio preprocess → Whisper → transcript. "
+            "Everything runs locally on the laptop."
+        )
         return
 
-    cfg = _load_config()
-    variant = cfg.get("model_variant", "base_en")
+    suffix = Path(uploaded.name).suffix or ".wav"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
+        tf.write(uploaded.read())
+        input_path = Path(tf.name)
 
-    # --- Backend 1: QNN-accelerated (Qualcomm hardware) ---
-    try:
-        root = str(_PROJECT_ROOT)
-        if root not in sys.path:
-            sys.path.insert(0, root)
+    tmp_dir = Path("runs")
+    tmp_dir.mkdir(exist_ok=True)
+    pre16_path = tmp_dir / "preprocessed_16k.wav"
+    filt_path = tmp_dir / "radio_filtered_16k.wav"
 
-        from model.model import make_whisper_app
+    audio, sr = load_mono(str(input_path))
+    audio_16k, _ = resample(audio, sr, WHISPER_SR)
+    if normalize:
+        audio_16k = normalize_peak(audio_16k)
+    save_wav(str(pre16_path), audio_16k, WHISPER_SR)
 
-        encoder = _PROJECT_ROOT / cfg.get("encoder_path", "models/WhisperEncoder.onnx")
-        decoder = _PROJECT_ROOT / cfg.get("decoder_path", "models/WhisperDecoder.onnx")
+    if apply_radio_filter:
+        filtered = enhance_audio(audio_16k, WHISPER_SR)
+        save_wav(str(filt_path), filtered, WHISPER_SR)
+        asr_input = filt_path
+    else:
+        asr_input = pre16_path
 
-        if encoder.exists() and decoder.exists():
-            app = make_whisper_app(str(encoder), str(decoder), variant, cfg)
-            _backend = {"type": "qnn", "app": app, "cfg": cfg}
-            print(f"[ASR] Loaded QNN-accelerated Whisper ({variant})")
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        st.subheader("Original upload")
+        st.audio(input_path.read_bytes())
+        st.caption(f"Loaded: {sr} Hz, {len(audio)/max(sr,1):.2f}s")
+
+        st.subheader("Prepared (16 kHz mono)")
+        st.audio(pre16_path.read_bytes())
+        if apply_radio_filter:
+            st.subheader("After radio preprocess")
+            st.audio(filt_path.read_bytes())
+
+    with col2:
+        st.subheader("Transcript")
+        try:
+            t0 = time.time()
+            text, meta = transcribe(str(asr_input), WHISPER_SR)
+            total_ms = (time.time() - t0) * 1000.0
+        except Exception as e:
+            st.error(
+                "Transcription failed. If you're offline, make sure the ONNX encoder/decoder exist in ./models. "
+                "(models/WhisperEncoder.onnx and models/WhisperDecoder.onnx)"
+            )
+            st.code(str(e))
             return
+
+        st.write(text if text else "(no transcript)")
+
+        st.subheader("Performance")
+        st.json({**meta, "ui_total_ms": round(total_ms, 1)})
+
+        st.subheader("Export")
+        st.download_button(
+            "Download transcript.txt",
+            data=(text + "\n"),
+            file_name="transcript.txt",
+        )
+        st.download_button(
+            "Download metadata.json",
+            data=json.dumps({"meta": meta}, indent=2),
+            file_name="metadata.json",
+        )
+
+        with st.expander("Debug"):
+            st.write("ASR input file:", str(asr_input))
+            st.write("Model config path:", str(_CFG))
+            st.write("Tip: add ./models/*.onnx to .gitignore; don’t commit weights.")
+
+    try:
+        os.remove(str(input_path))
     except Exception:
         pass
-
-    # --- Backend 2: ONNX Runtime CPU via optimum ---
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-
-        from optimum.onnxruntime import ORTModelForSpeechSeq2Seq
-        from transformers import WhisperProcessor
-
-        model_id = _VARIANT_TO_HF.get(variant, "openai/whisper-base.en")
-
-        # Cache exported ONNX model locally under models/
-        onnx_dir = _PROJECT_ROOT / "models" / f"whisper-{variant}-onnx"
-
-        print(f"[ASR] Loading {model_id} via ONNX Runtime ...")
-
-        if onnx_dir.exists():
-            model = ORTModelForSpeechSeq2Seq.from_pretrained(str(onnx_dir))
-        else:
-            model = ORTModelForSpeechSeq2Seq.from_pretrained(
-                model_id, export=True
-            )
-            onnx_dir.parent.mkdir(parents=True, exist_ok=True)
-            model.save_pretrained(str(onnx_dir))
-
-        processor = WhisperProcessor.from_pretrained(model_id)
-
-    _backend = {
-        "type": "ort",
-        "model": model,
-        "processor": processor,
-        "cfg": cfg,
-    }
-    print(f"[ASR] Ready — Whisper {variant} on ONNX Runtime CPU")
-
-
-def transcribe(audio_path, sr):
-    """
-    Transcribe an audio file with Whisper via ONNX Runtime.
-
-    Args:
-        audio_path: path to audio file (WAV, FLAC, etc.)
-        sr: sample rate of the audio file
-
-    Returns:
-        (transcript_text, metadata_dict)
-    """
-    _init_backend()
-
-    import soundfile as sf
-
-    audio, file_sr = sf.read(str(audio_path), dtype="float32")
-    if audio.ndim > 1:
-        audio = audio.mean(axis=1)
-
-    duration_sec = len(audio) / file_sr
-
-    # Whisper requires 16 kHz
-    audio_16k = _resample(audio, file_sr, _WHISPER_SR)
-
-    if _backend["type"] == "qnn":
-        app = _backend["app"]
-        t0 = time.time()
-        text = app.transcribe(audio_16k, _WHISPER_SR)
-        latency_ms = (time.time() - t0) * 1000
-
-    elif _backend["type"] == "ort":
-        model = _backend["model"]
-        processor = _backend["processor"]
-
-        t0 = time.time()
-        inputs = processor(
-            audio_16k, sampling_rate=_WHISPER_SR, return_tensors="pt"
-        )
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            predicted_ids = model.generate(inputs.input_features)
-        text = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
-        latency_ms = (time.time() - t0) * 1000
-
-    text = text.strip()
-
-    meta = {
-        "asr_latency_ms": round(latency_ms, 1),
-        "audio_duration_sec": round(duration_sec, 2),
-        "realtime_factor": round(latency_ms / 1000 / max(duration_sec, 0.001), 3),
-        "backend": _backend["type"],
-        "model_variant": _backend["cfg"].get("model_variant", "base_en"),
-    }
-
-    return text, meta
