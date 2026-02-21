@@ -1,0 +1,26 @@
+# audio
+sample_rate: 16000
+channels: 1
+blocksize: 1600           # 100ms blocks at 16k (stable callback)
+
+# utterance/VAD
+frame_ms: 20              # VAD frame size
+vad_rms_threshold: 0.010  # tune this on your laptop/mic
+min_speech_ms: 250        # ignore tiny blips
+hangover_ms: 500          # end utterance after this much silence
+preroll_ms: 200           # keep a bit before speech starts
+max_utterance_sec: 12     # cut long rambles to keep latency bounded
+
+# threading / latency
+max_workers: 1            # start with 1 for NPU; increase only if measured better
+queue_timeout: 0.5
+max_queue_chunks: 50      # drop old audio if queue backs up
+
+# model
+model_variant: base_en    # base_en/small_en/medium_en/etc (must match ONNX)
+encoder_path: models/WhisperEncoder.onnx
+decoder_path: models/WhisperDecoder.onnx
+
+# qnn
+htp_performance_mode: burst
+enable_htp_fp16_precision: "1"
