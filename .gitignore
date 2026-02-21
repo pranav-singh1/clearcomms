@@ -1,0 +1,41 @@
+# Python
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+/whisper-venv/
+/whispr_venv/
+venv/
+.venv/
+env/
+
+# Model weights (large files)
+/models/
+*.onnx
+
+# Build / dist
+/dist/
+/build/
+*.spec
+
+# Streamlit / app temp
+/runs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Optional: uncomment if config has secrets
+# config.yaml
