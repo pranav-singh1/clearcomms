@@ -5,3 +5,9 @@
 
 # Local dataset cache and generated artifacts for radio experiments
 radio_dispatch_filter/.cache/
+
+# ONNX model weights (large binary files)
+models/
+
+# Streamlit run artifacts
+runs/

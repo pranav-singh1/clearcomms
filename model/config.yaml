@@ -17,7 +17,7 @@ queue_timeout: 0.5
 max_queue_chunks: 50      # drop old audio if queue backs up
 
 # model
-model_variant: base_en    # base_en/small_en/medium_en/etc (must match ONNX)
+model_variant: large_v3_turbo  # large_v3_turbo/base_en/small_en/medium_en (must match ONNX)
 encoder_path: models/WhisperEncoder.onnx
 decoder_path: models/WhisperDecoder.onnx
 
