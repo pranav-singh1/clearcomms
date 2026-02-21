@@ -1,0 +1,9 @@
+numpy
+scipy
+soundfile
+sounddevice
+PyYAML
+onnxruntime
+optimum[onnxruntime]
+transformers
+streamlit
