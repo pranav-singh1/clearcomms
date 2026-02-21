@@ -1,10 +1,9 @@
-"""app/app.py
+# app/app.py
+import sys
+from pathlib import Path
 
-Streamlit entrypoint for ClearComms.
-
-Run from repo root:
-    streamlit run app/app.py
-"""
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from pipeline.app import run_streamlit_app
 
