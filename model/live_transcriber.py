@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import yaml
+from pathlib import Path
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
@@ -19,7 +20,9 @@ def rms(x: np.ndarray) -> float:
 
 class LiveTranscriber:
     def __init__(self):
-        with open("config.yaml", "r") as f:
+        project_root = Path(__file__).resolve().parent.parent
+        cfg_path = project_root / "model" / "config.yaml"
+        with open(cfg_path, "r") as f:
             cfg = yaml.safe_load(f)
 
         # audio settings
@@ -47,8 +50,10 @@ class LiveTranscriber:
         self.max_queue_chunks = cfg.get("max_queue_chunks", 50)
 
         # model paths
-        self.encoder_path = cfg.get("encoder_path", "models/WhisperEncoder.onnx")
-        self.decoder_path = cfg.get("decoder_path", "models/WhisperDecoder.onnx")
+        enc_cfg = Path(cfg.get("encoder_path", "models/WhisperEncoder.onnx"))
+        dec_cfg = Path(cfg.get("decoder_path", "models/WhisperDecoder.onnx"))
+        self.encoder_path = str(enc_cfg if enc_cfg.is_absolute() else (project_root / enc_cfg).resolve())
+        self.decoder_path = str(dec_cfg if dec_cfg.is_absolute() else (project_root / dec_cfg).resolve())
         self.model_variant = cfg.get("model_variant", "base_en")
 
         if not os.path.exists(self.encoder_path):

@@ -4,8 +4,16 @@
 # ---------------------------------------------------------------------
 import numpy as np
 import onnxruntime
+import os
+import platform
 from qai_hub_models.models._shared.whisper.model import Whisper
 from qai_hub_models.models.whisper_base_en import App as WhisperApp
+
+
+def _default_qnn_backend_path() -> str:
+    if platform.system().lower().startswith("win"):
+        return "QnnHtp.dll"
+    return "libQnnHtp.so"
 
 
 def get_onnxruntime_session_with_qnn_ep(path, cfg):
@@ -13,8 +21,12 @@ def get_onnxruntime_session_with_qnn_ep(path, cfg):
     # Optional: enable profiling when you want evidence
     # options.enable_profiling = True
 
+    backend_path = os.environ.get(
+        "QNN_BACKEND_PATH",
+        cfg.get("qnn_backend_path", _default_qnn_backend_path()),
+    )
     provider_options = {
-        "backend_path": "QnnHtp.dll",
+        "backend_path": backend_path,
         "htp_performance_mode": cfg.get("htp_performance_mode", "burst"),
         "high_power_saver": "sustained_high_performance",
         "enable_htp_fp16_precision": cfg.get("enable_htp_fp16_precision", "1"),
@@ -68,6 +80,8 @@ WHISPER_ARCH = {
     "small_en":  {"num_decoder_blocks": 12, "num_heads": 12, "attention_dim": 768},
     "medium_en": {"num_decoder_blocks": 24, "num_heads": 16, "attention_dim": 1024},
     "large_en":  {"num_decoder_blocks": 32, "num_heads": 20, "attention_dim": 1280},
+    # large-v3-turbo shares Whisper large architecture dimensions.
+    "large_v3_turbo": {"num_decoder_blocks": 32, "num_heads": 20, "attention_dim": 1280},
 }
 
 

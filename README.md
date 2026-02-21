@@ -61,8 +61,7 @@ Engineering focus includes:
 * Parameter tuning for noisy radio audio
 * Low latency on device inference using Snapdragon NPU acceleration
 
-Based on:
-[https://github.com/thatrandomfrenchdude/simple-whisper-transcription](https://github.com/thatrandomfrenchdude/simple-whisper-transcription)
+Based on [simple-whisper-transcription](https://github.com/thatrandomfrenchdude/simple-whisper-transcription) by thatrandomfrenchdude.
 
 ---
 
@@ -171,9 +170,10 @@ Everything runs fully offline.
 
 * Python
 * Whisper (ONNX Runtime)
-* LLaMA 8B (local inference)
+* LLaMA 3 8B Instruct (local inference via llama-cpp-python)
 * Qualcomm AI Hub tools
 * ONNX Runtime
+* Streamlit (UI)
 
 ---
 
@@ -209,6 +209,44 @@ This project focuses on:
 
 ---
 
+## Data Sources and References
+
+**Audio Data**
+
+* [LibriSpeech ASR Corpus](https://www.openslr.org/12) — Large-scale corpus of read English speech (CC BY 4.0). Used as clean speech source for generating simulated radio audio training pairs. Specifically uses the `test-clean` subset.
+  * V. Panayotov, G. Chen, D. Povey, S. Khudanpur, "LibriSpeech: an ASR corpus based on public domain audio books", ICASSP 2015
+  * Original audio derived from [LibriVox](https://librivox.org/) public domain audiobooks
+
+**Models**
+
+* [Whisper](https://github.com/openai/whisper) — Open source speech recognition model by OpenAI. Used for on-device transcription via ONNX Runtime.
+* [LLaMA](https://ai.meta.com/llama/) — Open source large language model by Meta. Used locally for transcript cleanup and structured incident extraction.
+
+**Tools and Frameworks**
+
+* [Qualcomm AI Hub](https://aihub.qualcomm.com/) — Model optimization and deployment for Snapdragon hardware
+* [ONNX Runtime](https://onnxruntime.ai/) — Cross-platform inference engine for optimized model execution
+* [simple-whisper-transcription](https://github.com/thatrandomfrenchdude/simple-whisper-transcription) — Reference implementation for Whisper transcription pipeline
+
+**License**
+
+* This project is licensed under GPL v3. See [LICENSE](LICENSE).
+* LibriSpeech data is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+---
+
 ## Why It Matters
 
 ClearComms makes critical communication understandable and actionable in the exact environments where reliability matters most.
+
+---
+
+## Setup Docs
+
+* Streamlit run/install guide: [streamline.md](streamline.md)
+* Snapdragon setup checklist: [snapdragon_setup.md](snapdragon_setup.md)
+* Environment diagnostics:
+
+```bash
+python tools/snapdragon_doctor.py
+```

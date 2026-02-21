@@ -24,3 +24,4 @@ decoder_path: models/WhisperDecoder.onnx
 # qnn
 htp_performance_mode: burst
 enable_htp_fp16_precision: "1"
+qnn_backend_path: QnnHtp.dll  # Windows Snapdragon default. Override with QNN_BACKEND_PATH env var.

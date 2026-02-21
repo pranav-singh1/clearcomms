@@ -2,11 +2,13 @@
 
 ClearComms Streamlit UI (offline-first).
 
-This UI is intentionally simple and demo-focused:
-  - Upload an audio clip
-  - (Optional) apply a light "radio" preprocess (bandpass + gate)
-  - Run Whisper (QNN EP if ONNX encoder/decoder are present)
-  - Show transcript + latency + backend proof
+Pipeline stages:
+  1. Upload audio clip
+  2. Preprocess (resample, bandpass, normalize)
+  3. Whisper ASR (QNN/NPU or ONNX CPU fallback)
+  4. Transcript cleanup (LLaMA or rule-based)
+  5. Structured incident extraction (LLaMA or rule-based)
+  6. Display + export
 
 Run:
     streamlit run app/app.py
@@ -22,9 +24,12 @@ from pathlib import Path
 from typing import Callable, Optional, Tuple
 
 import streamlit as st
+import yaml
 
 from pipeline.enhance import enhance_audio
 from pipeline.audio_io import load_mono, normalize_peak, resample, save_wav, WHISPER_SR
+from pipeline.cleanup import cleanup_transcript
+from pipeline.extract import extract_incident
 
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -33,9 +38,26 @@ _TRANSCRIBE_FN: Optional[Callable[[str, int], Tuple[str, dict]]] = None
 _TRANSCRIBE_IMPORT_ERROR: Optional[Exception] = None
 
 
+def _resolve_model_paths() -> Tuple[Path, Path]:
+    defaults = ("models/WhisperEncoder.onnx", "models/WhisperDecoder.onnx")
+    if _CFG.exists():
+        try:
+            with open(_CFG, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            enc_cfg = Path(cfg.get("encoder_path", defaults[0]))
+            dec_cfg = Path(cfg.get("decoder_path", defaults[1]))
+        except Exception:
+            enc_cfg, dec_cfg = Path(defaults[0]), Path(defaults[1])
+    else:
+        enc_cfg, dec_cfg = Path(defaults[0]), Path(defaults[1])
+
+    enc = enc_cfg if enc_cfg.is_absolute() else (_ROOT / enc_cfg)
+    dec = dec_cfg if dec_cfg.is_absolute() else (_ROOT / dec_cfg)
+    return enc, dec
+
+
 def _model_files_present() -> bool:
-    enc = _ROOT / "models" / "WhisperEncoder.onnx"
-    dec = _ROOT / "models" / "WhisperDecoder.onnx"
+    enc, dec = _resolve_model_paths()
     return enc.exists() and dec.exists()
 
 
@@ -57,11 +79,11 @@ def _get_transcribe_fn() -> Tuple[Optional[Callable[[str, int], Tuple[str, dict]
 
 def _demo_transcribe(duration_sec: float, clip_name: str) -> Tuple[str, dict]:
     templates = [
-        "Engine 12 to dispatch, smoke visible near Maple Street. Requesting backup.",
-        "Unit 4 arrived on scene. One patient stable, preparing transport.",
-        "Dispatch, possible traffic collision at Pine and 3rd. Need medical support.",
-        "Team reporting heavy interference on channel. Repeating location now.",
-        "Responder to base, hazard contained. Continuing perimeter check.",
+        "engine 12 to dispatch smoke visible near mapple street requesting back up",
+        "unit 4 arrived on scene one patient stable preparing transport to med center",
+        "dispatch poss traffic collision at pine and 3rd need med support",
+        "team reporting heavy interference on channel repeating location now",
+        "responder to base hazard contained continuing perimeter check eng 7 standing by",
     ]
     idx = (len(clip_name) + int(duration_sec * 10)) % len(templates)
     text = templates[idx]
@@ -94,14 +116,17 @@ def run_streamlit_app() -> None:
 
         st.divider()
         st.subheader("Model backend")
-        model_files_present = _model_files_present()
+        enc_model_path, dec_model_path = _resolve_model_paths()
+        model_files_present = enc_model_path.exists() and dec_model_path.exists()
         if model_files_present:
-            st.success("Found ONNX encoder/decoder → QNN/NPU backend should load")
+            st.success("Found ONNX encoder/decoder in config paths.")
         else:
             st.warning(
-                "ONNX encoder/decoder not found in ./models. "
-                "ASR may fall back to HuggingFace ONNX export (requires internet the first time)."
+                "Configured ONNX encoder/decoder not found. "
+                "ASR may fall back to HuggingFace ONNX export (internet needed once)."
             )
+        st.caption(f"Encoder: {enc_model_path}")
+        st.caption(f"Decoder: {dec_model_path}")
         st.caption("Config: model/config.yaml")
 
         st.divider()
@@ -126,7 +151,8 @@ def run_streamlit_app() -> None:
 
     if not uploaded:
         st.info(
-            "Upload a clip to run: upload → (optional) radio preprocess → Whisper → transcript. "
+            "Upload a clip to run the full pipeline: "
+            "preprocess → Whisper → cleanup → incident extraction. "
             "Everything runs locally on the laptop."
         )
         return
@@ -169,8 +195,10 @@ def run_streamlit_app() -> None:
                 st.audio(filt_path.read_bytes())
 
         with col2:
-            st.subheader("Transcript")
-            t0 = time.time()
+            pipeline_t0 = time.time()
+
+            # --- Layer 3: ASR ---
+            st.subheader("Raw Transcript")
 
             mode_used = "demo" if demo_mode else "asr"
             asr_error: Optional[Exception] = None
@@ -205,28 +233,89 @@ def run_streamlit_app() -> None:
                             st.code(str(exc))
                             return
 
-            total_ms = (time.time() - t0) * 1000.0
             st.write(text if text else "(no transcript)")
 
-            st.subheader("Performance")
-            st.json({**meta, "ui_total_ms": round(total_ms, 1), "ui_mode": mode_used})
+            # --- Layer 4: Transcript Cleanup ---
+            st.subheader("Cleaned Transcript")
+            cleaned_text, cleanup_meta = cleanup_transcript(text)
+            st.write(cleaned_text if cleaned_text else "(no output)")
 
+            if text != cleaned_text:
+                with st.expander("Side-by-side comparison"):
+                    raw_col, clean_col = st.columns(2)
+                    with raw_col:
+                        st.caption("Raw")
+                        st.text(text)
+                    with clean_col:
+                        st.caption("Cleaned")
+                        st.text(cleaned_text)
+
+            # --- Layer 5: Structured Incident Extraction ---
+            st.subheader("Incident Report")
+            incident, extract_meta = extract_incident(cleaned_text)
+
+            urgency_colors = {
+                "critical": "red", "high": "orange",
+                "medium": "blue", "low": "green",
+            }
+            urg = incident.get("urgency", "medium")
+            st.markdown(f"**Urgency:** :{urgency_colors.get(urg, 'blue')}[{urg.upper()}]")
+            st.markdown(f"**Type:** {incident.get('request_type', 'unknown')}")
+            st.markdown(f"**Location:** {incident.get('location', 'unknown')}")
+
+            if incident.get("units"):
+                st.markdown(f"**Units:** {', '.join(incident['units'])}")
+            if incident.get("hazards"):
+                st.markdown(f"**Hazards:** {', '.join(incident['hazards'])}")
+            if incident.get("actions"):
+                st.markdown(f"**Actions:** {', '.join(incident['actions'])}")
+
+            total_pipeline_ms = (time.time() - pipeline_t0) * 1000.0
+
+            # --- Layer 7: Performance ---
+            st.subheader("Performance")
+            all_meta = {
+                **meta,
+                **cleanup_meta,
+                **extract_meta,
+                "total_pipeline_ms": round(total_pipeline_ms, 1),
+                "ui_mode": mode_used,
+            }
+            st.json(all_meta)
+            if all_meta.get("qnn_status") == "failed":
+                st.warning("QNN backend failed; currently running CPU fallback.")
+                if all_meta.get("qnn_error"):
+                    st.code(str(all_meta["qnn_error"]))
+
+            # --- Export ---
             st.subheader("Export")
+            incident_json_str = json.dumps(incident, indent=2)
+
+            st.download_button(
+                "Download incident.json",
+                data=incident_json_str,
+                file_name="incident.json",
+            )
             st.download_button(
                 "Download transcript.txt",
-                data=(text + "\n"),
+                data=(cleaned_text + "\n"),
                 file_name="transcript.txt",
             )
             st.download_button(
-                "Download metadata.json",
-                data=json.dumps({"meta": meta, "ui_mode": mode_used}, indent=2),
-                file_name="metadata.json",
+                "Download full_report.json",
+                data=json.dumps(
+                    {"incident": incident, "raw_transcript": text,
+                     "cleaned_transcript": cleaned_text, "meta": all_meta},
+                    indent=2,
+                ),
+                file_name="full_report.json",
             )
 
             with st.expander("Debug"):
                 st.write("ASR input file:", str(asr_input))
                 st.write("Model config path:", str(_CFG))
-                st.write("Tip: add ./models/*.onnx to .gitignore; don’t commit weights.")
+                st.write("Cleanup method:", cleanup_meta.get("cleanup_method"))
+                st.write("Extract method:", extract_meta.get("extract_method"))
                 if asr_error is not None:
                     st.write("ASR error:", str(asr_error))
     finally:
