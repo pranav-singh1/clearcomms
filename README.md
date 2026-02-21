@@ -22,9 +22,35 @@ ClearComms solves this by running transcription and structuring fully on device.
 
 ## Solution
 
-ClearComms processes radio audio through three local stages:
+ClearComms processes radio audio through a layered on-device pipeline. Each layer has a clear responsibility and feeds into the next.
 
-**1. Offline Speech Recognition**
+**1. Audio Input and Preprocessing**
+
+Raw audio is loaded and normalized before any model touches it.
+
+* Convert to mono and resample to 16 kHz
+* Normalize volume to stabilize amplitude
+* Bandpass filter around 300–3400 Hz (radio bandwidth)
+* Automatic gain control for consistent loudness
+* Optional light noise gate to reduce constant hiss
+
+This ensures consistent input for downstream models regardless of recording conditions.
+
+---
+
+**2. Speech Enhancement (Optional)**
+
+An optional speech enhancement step can reduce additive noise such as wind, hiss, crowd, or sirens.
+
+* Only applied when it measurably improves transcription accuracy
+* Does not recover clipped audio, dropouts, or words that were never in the signal
+* Can be toggled on or off depending on audio conditions
+
+This layer is kept conditional. If Whisper already handles the noise well, it is skipped.
+
+---
+
+**3. Offline Speech Recognition**
 
 Audio is transcribed locally using an optimized version of Whisper from OpenAI.
 
@@ -33,48 +59,95 @@ Engineering focus includes:
 * Running Whisper with ONNX Runtime
 * Model optimization and quantization
 * Parameter tuning for noisy radio audio
-* Low latency on device inference
+* Low latency on device inference using Snapdragon NPU acceleration
 
 Based on:
 [https://github.com/thatrandomfrenchdude/simple-whisper-transcription](https://github.com/thatrandomfrenchdude/simple-whisper-transcription)
 
 ---
 
-**2. Structured Incident Extraction**
+**4. Transcript Cleanup**
 
-The transcript is processed by a local LLM such as LLaMA from Meta to convert raw speech into structured outputs.
+The raw transcript is cleaned up before structured extraction. This recovers intelligibility that audio enhancement alone cannot fix.
+
+* Fix common ASR garbles (e.g. "mapple street" to "Maple Street")
+* Restore punctuation and casing
+* Expand abbreviations (e.g. "med" to "medical")
+* Remove repeated words caused by radio jitter
+
+Implemented with a small local LLM or a lightweight rules and dictionary fallback.
+
+---
+
+**5. Structured Incident Extraction**
+
+The cleaned transcript is processed by a local LLM such as LLaMA from Meta to produce structured incident output.
 
 Example:
 
-**Raw transcript**
+**Cleaned transcript**
 
-> unit 12 need backup at 5th street possible fire
+> Engine 12 respond to 235 Maple Street. Smoke visible. Need backup.
 
 **Structured output**
 
-```
-Location: 5th Street
-Request: Backup
-Incident: Fire
-Urgency: High
+```json
+{
+  "request_type": "fire",
+  "urgency": "high",
+  "location": "235 Maple Street",
+  "hazards": ["smoke"],
+  "units": ["Engine 12"],
+  "actions": ["respond", "send backup"]
+}
 ```
 
 This makes communication faster to interpret and act on.
 
 ---
 
-**3. Offline End to End Pipeline**
+**6. Review Assist Interface**
+
+A focused interface designed for fast verification under stress, not decoration.
+
+* Segment list with timestamps and inline playback
+* Highlighted uncertain segments that need human confirmation
+* Side by side view of raw vs cleaned transcript
+* Export structured incident report as JSON
+
+---
+
+**7. Performance and Offline Proof**
+
+Instrumentation that proves the system works on device and meets latency requirements.
+
+* Measures enhancement time, ASR time, and post-processing time in milliseconds
+* Reports end to end latency and realtime factor
+* Demonstrates full offline operation with Wi-Fi disabled
+* Logs CPU and NPU utilization
+
+---
+
+**End to End Pipeline**
 
 ```
 Radio Audio
    ↓
+Preprocessing (mono, 16 kHz, bandpass, AGC)
+   ↓
+Enhancement (optional noise reduction)
+   ↓
 Whisper (ONNX, on device)
    ↓
-Transcript
+Raw Transcript
    ↓
-Local LLaMA
+Transcript Cleanup (LLM or rules)
    ↓
-Structured Incident Report
+Cleaned Transcript
+   ↓
+Local LLaMA → Structured Incident Report
+   ↓
+Review Assist UI + Performance Metrics
 ```
 
 Everything runs fully offline.
@@ -83,12 +156,14 @@ Everything runs fully offline.
 
 ## Key Features
 
-* Fully offline operation
-* Optimized Whisper inference using ONNX
-* Structured incident extraction with local LLM
+* Fully offline operation with no cloud dependencies
+* Audio preprocessing tuned for radio bandwidth and noise conditions
+* Optimized Whisper inference using ONNX with Snapdragon NPU acceleration
+* Transcript cleanup to recover intelligibility beyond what audio enhancement can fix
+* Structured incident extraction with local LLM outputting actionable JSON
+* Review assist interface with playback, uncertainty highlighting, and export
+* Performance instrumentation with latency and utilization metrics
 * Designed for Qualcomm AI hardware
-* Fast, reliable transcription in noisy environments
-* Simple, usable interface for real time use
 
 ---
 
@@ -106,12 +181,15 @@ Everything runs fully offline.
 
 Input:
 
-* Noisy walkie talkie audio
+* Noisy walkie talkie audio clip
 
 Output:
 
-* Transcript
-* Structured incident summary
+* Preprocessed audio (bandpass filtered, normalized)
+* Raw transcript from Whisper
+* Cleaned transcript with corrected spelling, punctuation, and formatting
+* Structured incident JSON with type, urgency, location, hazards, units, and actions
+* Performance metrics showing per-stage and end to end latency
 
 Running locally with no internet.
 
@@ -121,10 +199,13 @@ Running locally with no internet.
 
 This project focuses on:
 
+* Audio preprocessing pipeline tuned for radio speech
 * Optimizing Whisper for on device radio transcription
-* Running LLaMA locally for structured outputs
-* Delivering a complete offline pipeline
-* Clean, usable demo experience
+* Transcript cleanup using a local LLM or rule-based fallback
+* Running LLaMA locally for structured incident extraction
+* Review assist UI with playback and verification features
+* Performance instrumentation proving on-device latency and offline capability
+* Delivering a complete offline pipeline with clean demo experience
 
 ---
 
