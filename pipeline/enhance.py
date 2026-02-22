@@ -21,6 +21,8 @@ def enhance_audio(audio, sr, intensity=0.5):
     """
     t = max(0.0, min(1.0, float(intensity)))
     x = audio.astype(np.float32)
+    if t <= 0.0:
+        return x
 
     # Bandpass: 150-5000 Hz at t=0, 300-3400 Hz at t=0.5, 700-2500 Hz at t=1.0
     lo = 150 + t * (700 - 150)

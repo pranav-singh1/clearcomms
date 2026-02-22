@@ -49,7 +49,7 @@ _TTS_CACHE_TTL_SEC = max(int(os.getenv("DEEPGRAM_TTS_CACHE_TTL_SEC", "600")), 0)
 _TTS_TIMEOUT_SEC = max(float(os.getenv("DEEPGRAM_TTS_TIMEOUT_SEC", "15")), 1.0)
 _DEEPGRAM_ENDPOINT = "https://api.deepgram.com/v1/speak"
 _DEEPGRAM_DEFAULT_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-arcas-en").strip() or "aura-2-arcas-en"
-_DEEPGRAM_DEFAULT_SPEED = 1.25
+_DEEPGRAM_DEFAULT_SPEED = 1.15
 _TTS_ENCODING = "mp3"
 _TTS_STREAM_CHUNK_SIZE = 4096
 _TTS_CACHE: "OrderedDict[str, tuple[float, bytes]]" = OrderedDict()
@@ -147,7 +147,7 @@ def _synthesize_with_deepgram(text: str, model: str, encoding: str, speed: float
     # Content-Type: application/json
     # Query string: model=aura-2-arcas-en (or configured model)
     # Optional query: encoding=mp3 (default is mp3)
-    # Optional query: speed=1.25 (speaking rate multiplier; default 1.0)
+    # Optional query: speed=1.15 (speaking rate multiplier; default 1.0)
     # JSON body: { "text": "Hello ..." }
     # Response: binary audio stream (content-type audio/mpeg), often chunked.
     key = os.getenv("DEEPGRAM_API_KEY", "").strip()
@@ -315,7 +315,9 @@ async def api_transcribe(
     apply_radio = apply_radio_filter.lower() in ("true", "1", "yes")
     do_normalize = normalize.lower() in ("true", "1", "yes")
     is_mic = source.lower() == "mic"
-    intensity = max(0.0, min(1.0, float(radio_intensity) / 100.0))
+    raw_intensity = max(0.0, min(100.0, float(radio_intensity)))
+    # Map 50 -> 0.0 (no change), 100 -> 0.7 (toned-down max effect).
+    intensity = max(0.0, (raw_intensity - 50.0) / 50.0) * 0.7
 
     suffix = Path(file.filename or "audio.wav").suffix or ".wav"
     if suffix.lower() not in (".wav", ".flac", ".ogg", ".mp3", ".m4a"):
