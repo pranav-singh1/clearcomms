@@ -11,7 +11,6 @@ from scipy.signal import butter, lfilter
 
 from pipeline.audio_io import load_audio, normalize_peak, resample_to_16k, safe_wav_bytes
 from pipeline.llm_client import LLMConfig, cleanup_and_extract
-from pipeline.text_utils import html_diff, word_error_rate
 
 
 # -----------------------------
