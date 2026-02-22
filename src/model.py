@@ -59,7 +59,6 @@ class ONNXDecoderWrapper:
             },
         )
 
-
 class WhisperBaseEnONNX(Whisper):
     def __init__(self, encoder_path, decoder_path):
         super().__init__(
@@ -70,13 +69,22 @@ class WhisperBaseEnONNX(Whisper):
             attention_dim=512,
         )
 
+class WhisperLargeV3TurboONNX(Whisper):
+    def __init__(self, encoder_path, decoder_path):
+        super().__init__(
+            ONNXEncoderWrapper(encoder_path),
+            ONNXDecoderWrapper(decoder_path),
+            num_decoder_blocks=4,
+            num_heads=20,
+            attention_dim=1280,
+        )
+
 
 def make_whisper_app(encoder_path, decoder_path, variant, cfg):
-    """
-    Build a Whisper app that runs on Snapdragon X NPU via ONNX QNN EP.
-    Used by pipeline/asr.py and the Streamlit UI (app/app.py).
-    """
     from qai_hub_models.models._shared.whisper.app import WhisperApp
 
-    whisper_model = WhisperBaseEnONNX(encoder_path, decoder_path)
+    if variant in ("large_v3_turbo", "large-v3-turbo"):
+        whisper_model = WhisperLargeV3TurboONNX(encoder_path, decoder_path)
+    else:
+        whisper_model = WhisperBaseEnONNX(encoder_path, decoder_path)
     return WhisperApp(whisper_model)

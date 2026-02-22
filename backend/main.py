@@ -370,6 +370,8 @@ async def api_transcribe(
             "error": None,
             "text": "",
             "cleaned_transcript": "",
+            "raw_transcript": None,
+            "revised_transcript": None,
             "meta": {},
             "audio_prepared_b64": audio_prepared_b64,
             "audio_filtered_b64": audio_filtered_b64,
@@ -382,9 +384,29 @@ async def api_transcribe(
             t0 = time.time()
             text, meta = transcribe(str(asr_input), WHISPER_SR)
             ui_total_ms = (time.time() - t0) * 1000.0
-            payload["text"] = (text or "").strip() or "(no transcript)"
-            payload["cleaned_transcript"] = payload["text"]
+            raw_text = (text or "").strip() or "(no transcript)"
+            payload["raw_transcript"] = raw_text
+            payload["text"] = raw_text
+            payload["cleaned_transcript"] = raw_text
             payload["meta"] = {**meta, "ui_total_ms": round(ui_total_ms, 1)}
+
+            llama_revision_env = os.getenv("ENABLE_LLAMA_REVISION", "").strip()
+            print(f"[Llama] ENABLE_LLAMA_REVISION={llama_revision_env!r}", flush=True)
+            if llama_revision_env == "1":
+                if raw_text and raw_text != "(no transcript)":
+                    print("[Llama] Revision enabled, calling Genie...", flush=True)
+                    try:
+                        from llama_on_device import revise_transcript
+                        revised = revise_transcript(raw_text)
+                        payload["revised_transcript"] = revised
+                        payload["text"] = revised
+                        payload["cleaned_transcript"] = revised
+                        print("[Llama] Revision succeeded.", flush=True)
+                    except Exception as e:
+                        payload["meta"]["llama_revision_error"] = str(e)
+                        print(f"[Llama] Revision failed: {e}", flush=True)
+                else:
+                    print("[Llama] Revision enabled but skipped (no transcript to revise).", flush=True)
         except FileNotFoundError as e:
             payload["success"] = False
             payload["error"] = "ONNX encoder/decoder not found. Place WhisperEncoder.onnx and WhisperDecoder.onnx in models/."

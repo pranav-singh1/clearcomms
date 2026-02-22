@@ -8,6 +8,8 @@ export type TranscribeResult = {
   error: string | null;
   text: string;
   cleaned_transcript?: string;
+  raw_transcript?: string | null;
+  revised_transcript?: string | null;
   meta: Record<string, number | string>;
   audio_filtered_b64: string | null;
   apply_radio_filter: boolean;
