@@ -115,7 +115,7 @@ export async function synthesizeTTSStream(text: string): Promise<TtsStreamHandle
           };
           sourceBuffer.addEventListener("error", onError, { once: true });
           sourceBuffer.addEventListener("updateend", onUpdateEnd, { once: true });
-          const buffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);
+          const buffer = chunk.slice();
           sourceBuffer.appendBuffer(buffer);
         });
 
