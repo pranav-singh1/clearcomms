@@ -24,6 +24,7 @@ export function Result({
   const [ttsLoading, setTtsLoading] = useState(false);
   const [ttsError, setTtsError] = useState<string | null>(null);
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsCacheRef = useRef<Map<string, string>>(new Map());
   const { enqueue, queueSize, playing, generating, error: realtimeError, clearError } = useTtsQueue();
 
@@ -78,6 +79,30 @@ export function Result({
     lastSpokenFullRef.current = "";
     lastTtsAtRef.current = 0;
   }, [result]);
+
+  useEffect(() => {
+    if (!ttsAudioUrl) return;
+    const el = ttsAudioRef.current;
+    if (!el) return;
+    el.preload = "auto";
+    const play = () => {
+      void el.play().catch(() => {
+        /* autoplay may be blocked */
+      });
+    };
+    if (el.readyState >= 2) {
+      play();
+      return;
+    }
+    const onCanPlay = () => {
+      el.removeEventListener("canplay", onCanPlay);
+      play();
+    };
+    el.addEventListener("canplay", onCanPlay);
+    return () => {
+      el.removeEventListener("canplay", onCanPlay);
+    };
+  }, [ttsAudioUrl]);
 
   useEffect(() => {
     cleanedTranscriptRef.current = cleanedTranscript;
@@ -267,7 +292,7 @@ export function Result({
               </div>
             )}
             {ttsAudioUrl && (
-              <audio controls autoPlay src={ttsAudioUrl} className="w-full h-8" />
+              <audio ref={ttsAudioRef} controls autoPlay preload="auto" src={ttsAudioUrl} className="w-full h-8" />
             )}
           </div>
         </div>

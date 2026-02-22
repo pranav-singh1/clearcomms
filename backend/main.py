@@ -49,9 +49,9 @@ _TTS_CACHE_TTL_SEC = max(int(os.getenv("DEEPGRAM_TTS_CACHE_TTL_SEC", "600")), 0)
 _TTS_TIMEOUT_SEC = max(float(os.getenv("DEEPGRAM_TTS_TIMEOUT_SEC", "15")), 1.0)
 _DEEPGRAM_ENDPOINT = "https://api.deepgram.com/v1/speak"
 _DEEPGRAM_DEFAULT_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-arcas-en").strip() or "aura-2-arcas-en"
-_DEEPGRAM_DEFAULT_SPEED = 1.5
+_DEEPGRAM_DEFAULT_SPEED = 1.25
 _TTS_ENCODING = "mp3"
-_TTS_STREAM_CHUNK_SIZE = 16384
+_TTS_STREAM_CHUNK_SIZE = 4096
 _TTS_CACHE: "OrderedDict[str, tuple[float, bytes]]" = OrderedDict()
 _TTS_CACHE_LOCK = threading.Lock()
 
@@ -147,7 +147,7 @@ def _synthesize_with_deepgram(text: str, model: str, encoding: str, speed: float
     # Content-Type: application/json
     # Query string: model=aura-2-arcas-en (or configured model)
     # Optional query: encoding=mp3 (default is mp3)
-    # Optional query: speed=1.5 (speaking rate multiplier; default 1.0)
+    # Optional query: speed=1.25 (speaking rate multiplier; default 1.0)
     # JSON body: { "text": "Hello ..." }
     # Response: binary audio stream (content-type audio/mpeg), often chunked.
     key = os.getenv("DEEPGRAM_API_KEY", "").strip()

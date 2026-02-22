@@ -112,7 +112,7 @@ Both versions provide the same functionality but use different model loading app
 To configure Deepgram TTS in the backend:
 ```
 export DEEPGRAM_TTS_MODEL=aura-2-arcas-en
-export DEEPGRAM_TTS_SPEED=1.5
+export DEEPGRAM_TTS_SPEED=1.25
 ```
 
 ### Building an Executable

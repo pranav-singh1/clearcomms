@@ -31,6 +31,8 @@ export function useTtsQueue(): TtsQueueState {
   const playNext = useCallback(() => {
     if (!audioRef.current) {
       audioRef.current = new Audio();
+      audioRef.current.preload = "auto";
+      audioRef.current.autoplay = true;
       audioRef.current.onended = () => {
         setPlaying(false);
         playNext();
