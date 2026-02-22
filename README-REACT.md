@@ -41,74 +41,64 @@ All changes are on the **revised-frontend** branch.
 
 ## Offline TTS with Piper
 
-The React demo includes a **"Speak cleaned transcript (offline)"** button in the output panel.
-It calls `POST /api/tts` on the FastAPI backend, which runs Piper locally and returns `audio/wav`.
+The React demo includes a **"Speak cleaned transcript (offline)"** button when Piper is configured.
+The backend uses `PIPER_MODEL_PATH` and optionally `PIPER_BIN`.
 
-### 1. Install Piper
+### 1. Download voice model (Windows)
 
-Install Piper so `piper` is available on your PATH, or set `PIPER_BIN` to the executable path.
+From **project root** in PowerShell:
 
-Examples:
+```powershell
+.\setup_piper.ps1
+```
 
-```bash
-# Linux (pip package that provides Piper CLI)
-pip install piper-tts
+This creates `assets\voices\` and downloads `en_US-lessac-medium.onnx` and `en_US-lessac-medium.onnx.json`.
 
-# Verify
+### 2. Set environment and start backend
+
+In the **same** PowerShell where you start the backend (venv activated):
+
+```powershell
+$env:PIPER_MODEL_PATH="C:\Users\hackathon user\Documents\qualhack\simple-whisper-transcription\assets\voices\en_US-lessac-medium.onnx"
+# Only if piper is not on PATH:
+# $env:PIPER_BIN="C:\path\to\piper.exe"
+
+uvicorn backend.main:app --reload --host 127.0.0.1 --port 8001
+```
+
+Checks:
+- File exists: `...\assets\voices\en_US-lessac-medium.onnx`
+- Matching config in same folder: `...\en_US-lessac-medium.onnx.json`
+- `piper --help` works (or set `PIPER_BIN` to your `piper.exe`)
+- Restart backend after setting env vars
+
+### 3. Install Piper (if not on PATH)
+
+On Windows you need the Piper binary (e.g. from [Piper releases](https://github.com/rhasspy/piper/releases)) or the Python package:
+
+```powershell
+pip install piper-tts pathvalidate
 piper --help
 ```
 
-On Windows, you can also download Piper binaries and point `PIPER_BIN` to `piper.exe`.
+If TTS fails with `ModuleNotFoundError: No module named 'pathvalidate'`, run `pip install pathvalidate`.
 
-### 2. Download a voice model
+If you use a downloaded `piper.exe`, set `$env:PIPER_BIN` to its full path.
 
-Download a Piper ONNX voice model and place it under `assets/voices/` (or any local path), for example:
-
-```bash
-mkdir -p assets/voices
-# Example files (names vary by selected voice):
-# - en_US-lessac-medium.onnx
-# - en_US-lessac-medium.onnx.json
-```
-
-Important: keep both files together. Piper needs:
-- `your-voice.onnx`
-- `your-voice.onnx.json`
-
-### 3. Configure environment variables
-
-Set these before starting backend:
-
-```bash
-# required
-export PIPER_MODEL_PATH=/absolute/path/to/assets/voices/your-voice.onnx
-
-# optional (default is `piper`)
-export PIPER_BIN=/absolute/path/to/piper
-```
-
-Windows PowerShell:
-
-```powershell
-$env:PIPER_MODEL_PATH="C:\path\to\assets\voices\your-voice.onnx"
-$env:PIPER_BIN="C:\path\to\piper.exe"   # optional
-```
-
-### 4. Manual test
+### 4. Quick test
 
 With backend running:
 
-```bash
-curl -X POST http://127.0.0.1:8001/api/tts \
-  -H "Content-Type: application/json" \
-  -d '{"text":"hello"}' \
-  --output tts.wav
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8001/api/tts" -ContentType "application/json" -Body '{"text":"hello"}' -OutFile tts.wav
+# Then play tts.wav
 ```
 
-Expected:
-- HTTP 200
-- response content type `audio/wav`
-- playable `tts.wav`
+Or with curl (if installed):
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/tts -H "Content-Type: application/json" -d "{\"text\":\"hello\"}" --output tts.wav
+```
 
 ## Design
 

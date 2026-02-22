@@ -54,6 +54,22 @@ def model_status():
     return {"models_found": _model_files_present()}
 
 
+def _tts_available() -> bool:
+    model_path_raw = os.getenv("PIPER_MODEL_PATH", "").strip()
+    if not model_path_raw:
+        return False
+    model_path = Path(model_path_raw)
+    if not model_path.is_file():
+        return False
+    config_path = model_path.with_suffix(model_path.suffix + ".json")
+    return config_path.is_file()
+
+
+@app.get("/api/tts-status")
+def tts_status():
+    return {"available": _tts_available()}
+
+
 @app.post("/api/tts")
 def api_tts(payload: TTSRequest):
     text = (payload.text or "").strip()

@@ -1,0 +1,26 @@
+[33mcommit 3b74e83e57d84e11d54c4e79fb395f2a1c980155[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Merge: 8f7e557 a000f05
+Author: Pranav Singh <167955631+pranav-singh1@users.noreply.github.com>
+Date:   Sat Feb 21 17:21:43 2026 -0800
+
+    Merge pull request #1 from pranav-singh1/codex/mic-recording-ui
+    
+    Add microphone recording input path to Streamlit pipeline UI
+
+[33mcommit a000f059f71f77657be5c1891bf851a64c5119ad[m[33m ([m[1;31morigin/codex/mic-recording-ui[m[33m)[m
+Author: Pranav Singh <pranavsingh2006@gmail.com>
+Date:   Sat Feb 21 19:19:16 2026 -0600
+
+    Add microphone recording input path to Streamlit pipeline UI
+
+[33mcommit 8f7e55785d4b40f1d6385db24d806b8b673e4c52[m[33m ([m[1;31morigin/revised-frontend[m[33m, [m[1;32mrevised-frontend[m[33m)[m
+Author: Adit Singh <singh.adit6@gmail.com>
+Date:   Sat Feb 21 19:03:57 2026 -0600
+
+    React frontend with functional, FASTAPI Backend
+
+[33mcommit 544805ef73904da270d663df4ca4043cabd95282[m[33m ([m[1;31morigin/on-device[m[33m, [m[1;32mon-device[m[33m, [m[1;32mmaster[m[33m)[m
+Author: Adit Singh <singh.adit6@gmail.com>
+Date:   Sat Feb 21 17:52:14 2026 -0600
+
+    working on-device
