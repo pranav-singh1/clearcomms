@@ -108,6 +108,13 @@ python src\LiveTranscriber_standalone.py
 
 Both versions provide the same functionality but use different model loading approaches. The standalone version is more portable and doesn't require AI Hub dependencies.
 
+#### TTS Environment Variables
+To configure Deepgram TTS in the backend:
+```
+export DEEPGRAM_TTS_MODEL=aura-2-apollo-en
+export DEEPGRAM_TTS_SPEED=1.15
+```
+
 ### Building an Executable
 To create a standalone executable that can run without Python installed:
 

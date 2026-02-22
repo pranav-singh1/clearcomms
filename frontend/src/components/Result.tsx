@@ -251,7 +251,7 @@ export function Result({
             </button>
             <div className="text-xs font-mono text-defense-muted">
               {ttsAvailable
-                ? `Model: ${ttsStatus?.model || "aura-2-thalia-en"}`
+                ? `Model: ${ttsStatus?.model || "aura-2-apollo-en"}`
                 : isOffline
                 ? "TTS unavailable offline."
                 : ttsStatus?.reason || "TTS unavailable."}

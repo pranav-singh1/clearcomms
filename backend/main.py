@@ -47,7 +47,8 @@ _TTS_CACHE_MAX = max(int(os.getenv("DEEPGRAM_TTS_CACHE_MAX", "50")), 0)
 _TTS_CACHE_TTL_SEC = max(int(os.getenv("DEEPGRAM_TTS_CACHE_TTL_SEC", "600")), 0)
 _TTS_TIMEOUT_SEC = max(float(os.getenv("DEEPGRAM_TTS_TIMEOUT_SEC", "15")), 1.0)
 _DEEPGRAM_ENDPOINT = "https://api.deepgram.com/v1/speak"
-_DEEPGRAM_DEFAULT_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en").strip() or "aura-2-thalia-en"
+_DEEPGRAM_DEFAULT_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-apollo-en").strip() or "aura-2-apollo-en"
+_DEEPGRAM_DEFAULT_SPEED = 1.15
 _TTS_ENCODING = "mp3"
 _TTS_CACHE: "OrderedDict[str, tuple[float, bytes]]" = OrderedDict()
 _TTS_CACHE_LOCK = threading.Lock()
@@ -105,6 +106,20 @@ def _tts_model() -> str:
     return os.getenv("DEEPGRAM_TTS_MODEL", "").strip() or _DEEPGRAM_DEFAULT_MODEL
 
 
+def _tts_speed() -> float:
+    raw = os.getenv("DEEPGRAM_TTS_SPEED", "").strip()
+    if not raw:
+        return _DEEPGRAM_DEFAULT_SPEED
+    try:
+        speed = float(raw)
+    except ValueError:
+        return 1.0
+    # Deepgram Aura-2 speed control expects a 0.7–1.5 multiplier; out-of-range values fall back to 1.0.
+    if speed < 0.7 or speed > 1.5:
+        return 1.0
+    return speed
+
+
 def _decode_error_payload(payload: bytes) -> str:
     if not payload:
         return ""
@@ -123,20 +138,21 @@ def _decode_error_payload(payload: bytes) -> str:
     return text
 
 
-def _synthesize_with_deepgram(text: str, model: str, encoding: str) -> bytes:
+def _synthesize_with_deepgram(text: str, model: str, encoding: str, speed: float) -> bytes:
     # Deepgram TTS API:
     # Endpoint: POST https://api.deepgram.com/v1/speak
     # Auth header: Authorization: Token <DEEPGRAM_API_KEY>
     # Content-Type: application/json
-    # Query string: model=aura-2-thalia-en (or configured model)
+    # Query string: model=aura-2-apollo-en (or configured model)
     # Optional query: encoding=mp3 (default is mp3)
+    # Optional query: speed=1.15 (speaking rate multiplier; default 1.0)
     # JSON body: { "text": "Hello ..." }
     # Response: binary audio stream (content-type audio/mpeg), often chunked.
     key = os.getenv("DEEPGRAM_API_KEY", "").strip()
     if not key:
         raise HTTPException(503, "TTS unavailable: DEEPGRAM_API_KEY is not configured.")
 
-    query = urllib.parse.urlencode({"model": model, "encoding": encoding})
+    query = urllib.parse.urlencode({"model": model, "encoding": encoding, "speed": speed})
     url = f"{_DEEPGRAM_ENDPOINT}?{query}"
     payload = json.dumps({"text": text}).encode("utf-8")
     req = urllib.request.Request(
@@ -188,12 +204,13 @@ def api_tts(payload: TTSRequest):
         raise HTTPException(503, "TTS unavailable: DEEPGRAM_API_KEY is not configured.")
 
     model = _tts_model()
-    cache_key = hashlib.sha256(f"{model}|{_TTS_ENCODING}|{text}".encode("utf-8")).hexdigest()
+    speed = _tts_speed()
+    cache_key = hashlib.sha256(f"{model}|{_TTS_ENCODING}|{speed}|{text}".encode("utf-8")).hexdigest()
     cached_audio = _tts_cache_get(cache_key)
     if cached_audio is not None:
         return Response(content=cached_audio, media_type="audio/mpeg", headers={"X-TTS-Cache": "HIT"})
 
-    audio_bytes = _synthesize_with_deepgram(text, model, _TTS_ENCODING)
+    audio_bytes = _synthesize_with_deepgram(text, model, _TTS_ENCODING, speed)
     _tts_cache_set(cache_key, audio_bytes)
     return Response(
         content=audio_bytes,
