@@ -51,9 +51,13 @@ async def api_transcribe(
     file: UploadFile = File(...),
     apply_radio_filter: str = Form("true"),
     normalize: str = Form("true"),
+    source: str = Form("file"),
+    radio_intensity: str = Form("50"),
 ):
     apply_radio = apply_radio_filter.lower() in ("true", "1", "yes")
     do_normalize = normalize.lower() in ("true", "1", "yes")
+    is_mic = source.lower() == "mic"
+    intensity = max(0.0, min(1.0, float(radio_intensity) / 100.0))
 
     suffix = Path(file.filename or "audio.wav").suffix or ".wav"
     if suffix.lower() not in (".wav", ".flac", ".ogg", ".mp3", ".m4a"):
@@ -81,7 +85,11 @@ async def api_transcribe(
         save_wav(str(pre16_path), audio_16k, WHISPER_SR)
 
         if apply_radio:
-            filtered = enhance_audio(audio_16k, WHISPER_SR)
+            filtered = enhance_audio(audio_16k, WHISPER_SR, intensity)
+            if is_mic:
+                # Mic audio is already clean — run a second enhancement pass
+                # after the radio filter to further clarify the signal.
+                filtered = enhance_audio(filtered, WHISPER_SR, intensity)
             save_wav(str(filt_path), filtered, WHISPER_SR)
             asr_input = filt_path
         else:

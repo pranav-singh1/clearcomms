@@ -22,12 +22,16 @@ export async function modelStatus(): Promise<ModelStatus> {
 export async function uploadAndTranscribe(
   file: File,
   applyRadioFilter: boolean,
-  normalize: boolean
+  normalize: boolean,
+  source: "mic" | "file" = "file",
+  radioIntensity: number = 50
 ): Promise<TranscribeResult> {
   const form = new FormData();
   form.append("file", file);
   form.append("apply_radio_filter", String(applyRadioFilter));
   form.append("normalize", String(normalize));
+  form.append("source", source);
+  form.append("radio_intensity", String(radioIntensity));
 
   const res = await fetch(`${API_BASE}/api/transcribe`, {
     method: "POST",

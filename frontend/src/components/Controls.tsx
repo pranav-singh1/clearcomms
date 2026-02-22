@@ -4,6 +4,8 @@ import { modelStatus } from "../api";
 type Props = {
   applyRadioFilter: boolean;
   setApplyRadioFilter: (v: boolean) => void;
+  radioIntensity: number;
+  setRadioIntensity: (v: number) => void;
   normalize: boolean;
   setNormalize: (v: boolean) => void;
 };
@@ -11,6 +13,8 @@ type Props = {
 export function Controls({
   applyRadioFilter,
   setApplyRadioFilter,
+  radioIntensity,
+  setRadioIntensity,
   normalize,
   setNormalize,
 }: Props) {
@@ -34,6 +38,30 @@ export function Controls({
           <span className="text-xs text-defense-muted">Filters static and applies gate logic</span>
         </div>
       </label>
+
+      {applyRadioFilter && (
+        <div className="flex flex-col gap-2 pl-7">
+          <div className="flex justify-between items-center">
+            <span className="text-xs text-defense-muted uppercase tracking-widest">Radio Intensity</span>
+            <span className="text-xs text-defense-accent font-mono tabular-nums">
+              {radioIntensity === 50 ? "BASELINE" : radioIntensity < 50 ? `MILD (${radioIntensity})` : `HEAVY (${radioIntensity})`}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={radioIntensity}
+            onChange={(e) => setRadioIntensity(Number(e.target.value))}
+            className="w-full h-1 appearance-none bg-defense-border accent-defense-accent cursor-pointer"
+          />
+          <div className="flex justify-between text-[10px] text-defense-muted font-mono">
+            <span>MILD</span>
+            <span>BASELINE</span>
+            <span>HEAVY</span>
+          </div>
+        </div>
+      )}
 
       <label className="flex items-start gap-3 cursor-pointer group">
         <input

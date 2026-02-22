@@ -5,7 +5,8 @@ import { UploadZone } from "./UploadZone";
 import { Result } from "./Result";
 
 export function Demo() {
-  const [applyRadioFilter, setApplyRadioFilter] = useState(true);
+  const [applyRadioFilter, setApplyRadioFilter] = useState(false);
+  const [radioIntensity, setRadioIntensity] = useState(50);
   const [normalize, setNormalize] = useState(true);
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<TranscribeResult | null>(null);
@@ -16,6 +17,12 @@ export function Demo() {
     setFile(f);
     setResult(null);
     setError(null);
+    // Auto-configure DSP based on source:
+    // mic recordings are already clean so run them through the radio filter pipeline;
+    // uploaded files (already radio-distorted) skip DSP by default.
+    if (f) {
+      setApplyRadioFilter(f.name.startsWith("mic-"));
+    }
   }, []);
 
   const handleSubmit = useCallback(async () => {
@@ -23,15 +30,16 @@ export function Demo() {
     setLoading(true);
     setError(null);
     setResult(null);
+    const source: "mic" | "file" = file.name.startsWith("mic-") ? "mic" : "file";
     try {
-      const data = await uploadAndTranscribe(file, applyRadioFilter, normalize);
+      const data = await uploadAndTranscribe(file, applyRadioFilter, normalize, source, radioIntensity);
       setResult(data);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Transcription failed.");
     } finally {
       setLoading(false);
     }
-  }, [file, applyRadioFilter, normalize]);
+  }, [file, applyRadioFilter, normalize, radioIntensity]);
 
   return (
     <section id="demo" className="py-12 border-b border-defense-border/50">
@@ -44,9 +52,11 @@ export function Demo() {
         <div className="lg:w-1/3 flex flex-col gap-6">
           <div className="bg-defense-800 border border-defense-border p-6">
             <h4 className="font-mono text-sm tracking-widest text-white mb-4 uppercase">Configuration</h4>
-            <Controls 
+            <Controls
               applyRadioFilter={applyRadioFilter}
               setApplyRadioFilter={setApplyRadioFilter}
+              radioIntensity={radioIntensity}
+              setRadioIntensity={setRadioIntensity}
               normalize={normalize}
               setNormalize={setNormalize}
             />
