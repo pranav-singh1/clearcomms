@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { modelStatus } from "../api";
+import { modelStatus, type TtsStatus } from "../api";
 
 type Props = {
   applyRadioFilter: boolean;
@@ -8,6 +8,12 @@ type Props = {
   setRadioIntensity: (v: number) => void;
   normalize: boolean;
   setNormalize: (v: boolean) => void;
+  ttsEnabled: boolean;
+  setTtsEnabled: (v: boolean) => void;
+  ttsStatus: TtsStatus | null;
+  realtimeTtsEnabled: boolean;
+  setRealtimeTtsEnabled: (v: boolean) => void;
+  micActive: boolean;
 };
 
 export function Controls({
@@ -17,12 +23,27 @@ export function Controls({
   setRadioIntensity,
   normalize,
   setNormalize,
+  ttsEnabled,
+  setTtsEnabled,
+  ttsStatus,
+  realtimeTtsEnabled,
+  setRealtimeTtsEnabled,
+  micActive,
 }: Props) {
   const [modelOk, setModelOk] = useState<boolean | null>(null);
 
   useEffect(() => {
     modelStatus().then(res => setModelOk(res.models_found)).catch(() => setModelOk(false));
   }, []);
+
+  const realtimeDisabledReason = !ttsEnabled
+    ? "Enable TTS (online) to use realtime speech."
+    : !ttsStatus?.available
+    ? ttsStatus?.reason || "TTS backend unavailable."
+    : !micActive
+    ? "Enable Mic input to use realtime speech."
+    : null;
+  const realtimeDisabled = Boolean(realtimeDisabledReason);
 
   return (
     <div className="flex flex-col gap-4 font-mono text-sm">
@@ -73,6 +94,44 @@ export function Controls({
         <div className="flex flex-col gap-1">
           <span className="text-white group-hover:text-defense-accent transition-colors">Peak Normalization</span>
           <span className="text-xs text-defense-muted">Auto-level input loudness before ASR</span>
+        </div>
+      </label>
+
+      <label className="flex items-start gap-3 cursor-pointer group">
+        <input
+          type="checkbox"
+          checked={ttsEnabled}
+          onChange={(e) => setTtsEnabled(e.target.checked)}
+          disabled={!ttsStatus?.available}
+          className="mt-1 appearance-none w-4 h-4 border border-defense-border checked:bg-defense-accent checked:border-defense-accent transition-colors relative disabled:opacity-50"
+        />
+        <div className="flex flex-col gap-1">
+          <span className="text-white group-hover:text-defense-accent transition-colors">TTS (online)</span>
+          <span className="text-xs text-defense-muted">
+            {ttsStatus
+              ? ttsStatus.available
+                ? `Deepgram ${ttsStatus.model}`
+                : ttsStatus.reason || "Unavailable"
+              : "Checking TTS status..."}
+          </span>
+        </div>
+      </label>
+
+      <label className={`flex items-start gap-3 ${realtimeDisabled ? "cursor-not-allowed" : "cursor-pointer"} group`}>
+        <input
+          type="checkbox"
+          checked={realtimeTtsEnabled}
+          onChange={(e) => setRealtimeTtsEnabled(e.target.checked)}
+          disabled={realtimeDisabled}
+          title={realtimeDisabledReason || undefined}
+          className="mt-1 appearance-none w-4 h-4 border border-defense-border checked:bg-defense-accent checked:border-defense-accent transition-colors relative disabled:opacity-50"
+        />
+        <div className="flex flex-col gap-1">
+          <span className="text-white group-hover:text-defense-accent transition-colors">Realtime TTS (Mic)</span>
+          <span className="text-xs text-defense-muted">Speak cleaned transcript segments automatically (online)</span>
+          {realtimeDisabledReason && (
+            <span className="text-xs text-amber-400">{realtimeDisabledReason}</span>
+          )}
         </div>
       </label>
 

@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { uploadAndTranscribe, type TranscribeResult } from "../api";
+import { useState, useCallback, useEffect } from "react";
+import { uploadAndTranscribe, ttsStatus, type TranscribeResult, type TtsStatus } from "../api";
 import { Controls } from "./Controls";
 import { UploadZone } from "./UploadZone";
 import { Result } from "./Result";
@@ -12,6 +12,28 @@ export function Demo() {
   const [result, setResult] = useState<TranscribeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [ttsState, setTtsState] = useState<TtsStatus | null>(null);
+  const [realtimeTtsEnabled, setRealtimeTtsEnabled] = useState(false);
+  const [micActive, setMicActive] = useState(false);
+
+  useEffect(() => {
+    ttsStatus()
+      .then((status) => {
+        setTtsState(status);
+        if (!status.available) setTtsEnabled(false);
+      })
+      .catch(() => {
+        setTtsState({ available: false, model: "aura-2-thalia-en", reason: "Unavailable" });
+        setTtsEnabled(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!ttsEnabled || !ttsState?.available || !micActive) {
+      setRealtimeTtsEnabled(false);
+    }
+  }, [micActive, ttsEnabled, ttsState]);
 
   const handleFileChange = useCallback((f: File | null) => {
     setFile(f);
@@ -59,6 +81,12 @@ export function Demo() {
               setRadioIntensity={setRadioIntensity}
               normalize={normalize}
               setNormalize={setNormalize}
+              ttsEnabled={ttsEnabled}
+              setTtsEnabled={setTtsEnabled}
+              ttsStatus={ttsState}
+              realtimeTtsEnabled={realtimeTtsEnabled}
+              setRealtimeTtsEnabled={setRealtimeTtsEnabled}
+              micActive={micActive}
             />
           </div>
           
@@ -70,6 +98,7 @@ export function Demo() {
               onTranscribe={handleSubmit}
               loading={loading}
               disabled={!file}
+              onMicActiveChange={setMicActive}
             />
             {error && (
               <div className="mt-4 p-3 bg-red-950/30 border border-red-900/50 text-red-500 text-sm font-mono">
@@ -94,7 +123,11 @@ export function Demo() {
                 <Result 
                   result={result} 
                   originalFile={file} 
-                  applyRadioFilter={applyRadioFilter} 
+                  applyRadioFilter={applyRadioFilter}
+                  ttsEnabled={ttsEnabled}
+                  ttsStatus={ttsState}
+                  realtimeTtsEnabled={realtimeTtsEnabled}
+                  micActive={micActive}
                 />
               )
             )}

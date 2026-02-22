@@ -1,13 +1,32 @@
-import { useMemo } from "react";
-import type { TranscribeResult } from "../api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { synthesizeTTS, type TranscribeResult, type TtsStatus } from "../api";
+import { useTtsQueue } from "../hooks/useTtsQueue";
 
 type Props = {
   result: TranscribeResult;
   originalFile: File | null;
   applyRadioFilter: boolean;
+  ttsEnabled: boolean;
+  ttsStatus: TtsStatus | null;
+  realtimeTtsEnabled: boolean;
+  micActive: boolean;
 };
 
-export function Result({ result, originalFile, applyRadioFilter }: Props) {
+export function Result({
+  result,
+  originalFile,
+  applyRadioFilter,
+  ttsEnabled,
+  ttsStatus,
+  realtimeTtsEnabled,
+  micActive,
+}: Props) {
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [ttsError, setTtsError] = useState<string | null>(null);
+  const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
+  const ttsCacheRef = useRef<Map<string, string>>(new Map());
+  const { enqueue, queueSize, playing, generating, error: realtimeError, clearError } = useTtsQueue();
+
   const originalUrl = useMemo(() => (originalFile ? URL.createObjectURL(originalFile) : null), [originalFile]);
   const filteredUrl = useMemo(
     () => (result.audio_filtered_b64 ? `data:audio/wav;base64,${result.audio_filtered_b64}` : null),
@@ -15,9 +34,15 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
   );
 
   const transcriptIsError = Boolean(result.error);
+  const cleanedTranscript = (result.cleaned_transcript || result.text || "").trim();
+  const cleanedTranscriptRef = useRef(cleanedTranscript);
+  const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+  const ttsAvailable = Boolean(ttsStatus?.available);
+  const canSpeakCleaned =
+    !transcriptIsError && cleanedTranscript.length > 0 && ttsAvailable && ttsEnabled && !ttsLoading;
   const transcriptContent = result.error
     ? `ERR: ${result.error}`
-    : (result.text || "NO TRANSCRIPT_");
+    : (cleanedTranscript || result.text || "NO TRANSCRIPT_");
 
   // Simulated structured data based on the prompt "Cleaned transcript, Structured JSON output"
   const structuredData = useMemo(() => {
@@ -30,6 +55,141 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
       "timestamp": new Date().toISOString()
     };
   }, [result]);
+
+  useEffect(() => {
+    return () => {
+      for (const url of ttsCacheRef.current.values()) {
+        URL.revokeObjectURL(url);
+      }
+      ttsCacheRef.current.clear();
+    };
+  }, []);
+
+  const lastSpokenFullRef = useRef<string>("");
+  const lastTtsAtRef = useRef<number>(0);
+  const pendingTimerRef = useRef<number | null>(null);
+  const minIntervalMs = 1500;
+  const debounceMs = 600;
+
+  useEffect(() => {
+    setTtsError(null);
+    setTtsLoading(false);
+    setTtsAudioUrl(null);
+    lastSpokenFullRef.current = "";
+    lastTtsAtRef.current = 0;
+  }, [result]);
+
+  useEffect(() => {
+    cleanedTranscriptRef.current = cleanedTranscript;
+  }, [cleanedTranscript]);
+
+  const isSpeakable = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (trimmed.length < 8) return false;
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    return words.length >= 2;
+  }, []);
+
+  const extractSegment = useCallback((fullText: string, lastFull: string) => {
+    if (lastFull && fullText.startsWith(lastFull)) {
+      return fullText.slice(lastFull.length).trim();
+    }
+    return fullText.trim();
+  }, []);
+
+  useEffect(() => {
+    if (!realtimeTtsEnabled || !micActive || !ttsEnabled || !ttsAvailable || transcriptIsError) {
+      if (pendingTimerRef.current !== null) {
+        window.clearTimeout(pendingTimerRef.current);
+        pendingTimerRef.current = null;
+      }
+      return;
+    }
+    if (!isSpeakable(cleanedTranscript)) return;
+
+    if (pendingTimerRef.current !== null) {
+      window.clearTimeout(pendingTimerRef.current);
+      pendingTimerRef.current = null;
+    }
+
+    let cancelled = false;
+    const attemptSpeak = () => {
+      if (cancelled) return;
+      if (cleanedTranscriptRef.current !== cleanedTranscript) return;
+
+      const sinceLast = Date.now() - lastTtsAtRef.current;
+      if (sinceLast < minIntervalMs) {
+        pendingTimerRef.current = window.setTimeout(attemptSpeak, minIntervalMs - sinceLast);
+        return;
+      }
+
+      const segment = extractSegment(cleanedTranscript, lastSpokenFullRef.current);
+      if (!isSpeakable(segment)) {
+        if (cleanedTranscript.length >= lastSpokenFullRef.current.length) {
+          lastSpokenFullRef.current = cleanedTranscript;
+        }
+        return;
+      }
+
+      lastTtsAtRef.current = Date.now();
+      lastSpokenFullRef.current = cleanedTranscript;
+      enqueue(segment);
+    };
+
+    pendingTimerRef.current = window.setTimeout(attemptSpeak, debounceMs);
+
+    return () => {
+      cancelled = true;
+      if (pendingTimerRef.current !== null) {
+        window.clearTimeout(pendingTimerRef.current);
+        pendingTimerRef.current = null;
+      }
+    };
+  }, [
+    cleanedTranscript,
+    enqueue,
+    extractSegment,
+    isSpeakable,
+    micActive,
+    realtimeTtsEnabled,
+    transcriptIsError,
+    ttsAvailable,
+    ttsEnabled,
+  ]);
+
+  useEffect(() => {
+    if (!realtimeTtsEnabled) clearError();
+  }, [clearError, realtimeTtsEnabled]);
+
+  const handleSpeakCleanedTranscript = async () => {
+    if (!canSpeakCleaned) return;
+    const cached = ttsCacheRef.current.get(cleanedTranscript);
+    if (cached) {
+      setTtsAudioUrl(cached);
+      return;
+    }
+    setTtsLoading(true);
+    setTtsError(null);
+    try {
+      const audioBlob = await synthesizeTTS(cleanedTranscript);
+      const url = URL.createObjectURL(audioBlob);
+      ttsCacheRef.current.set(cleanedTranscript, url);
+      if (ttsCacheRef.current.size > 20) {
+        const oldestKey = ttsCacheRef.current.keys().next().value as string | undefined;
+        if (oldestKey) {
+          const oldestUrl = ttsCacheRef.current.get(oldestKey);
+          if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+          ttsCacheRef.current.delete(oldestKey);
+        }
+      }
+      setTtsAudioUrl(url);
+    } catch (e: unknown) {
+      setTtsError(e instanceof Error ? e.message : "TTS failed.");
+      setTtsAudioUrl(null);
+    } finally {
+      setTtsLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-8">
@@ -54,9 +214,56 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
       {/* Transcripts & Data */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
         <div className="flex flex-col">
-          <div className="border-b border-defense-border pb-2 mb-4 font-mono text-xs text-white uppercase">Raw Output</div>
+          <div className="border-b border-defense-border pb-2 mb-4 font-mono text-xs text-white uppercase">Cleaned Transcript</div>
           <div className={`font-mono text-sm leading-relaxed p-4 bg-defense-900 border ${transcriptIsError ? 'border-red-900/50 text-red-400' : 'border-defense-border text-white'}`}>
             {transcriptContent}
+          </div>
+          {realtimeTtsEnabled && (
+            <div className="mt-3 text-xs font-mono text-defense-muted">
+              Realtime TTS: ON
+              {queueSize > 0 ? ` · Queue: ${queueSize}` : ""}
+              {generating ? " · Generating speech..." : ""}
+              {playing ? " · Playing" : ""}
+            </div>
+          )}
+          {realtimeTtsEnabled && realtimeError && (
+            <div className="mt-2 p-2 bg-amber-950/30 border border-amber-900/50 text-amber-300 text-xs font-mono">
+              TTS failed (continuing): {realtimeError}
+            </div>
+          )}
+          <div className="mt-4 flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={handleSpeakCleanedTranscript}
+              disabled={!canSpeakCleaned}
+              title={
+                !ttsEnabled
+                  ? "TTS is disabled in settings."
+                  : !ttsAvailable
+                  ? (isOffline ? "TTS unavailable offline." : ttsStatus?.reason || "TTS unavailable.")
+                  : cleanedTranscript.length === 0
+                  ? "No cleaned transcript to speak."
+                  : undefined
+              }
+              className="px-4 py-2 border border-defense-border bg-defense-800 text-xs font-mono text-white hover:bg-defense-700 transition disabled:opacity-50 disabled:cursor-not-allowed text-left"
+            >
+              {ttsLoading ? "GENERATING SPEECH..." : "SPEAK CLEANED TRANSCRIPT"}
+            </button>
+            <div className="text-xs font-mono text-defense-muted">
+              {ttsAvailable
+                ? `Model: ${ttsStatus?.model || "aura-2-thalia-en"}`
+                : isOffline
+                ? "TTS unavailable offline."
+                : ttsStatus?.reason || "TTS unavailable."}
+            </div>
+            {ttsError && (
+              <div className="p-3 bg-red-950/30 border border-red-900/50 text-red-400 text-xs font-mono">
+                TTS ERR: {ttsError}
+              </div>
+            )}
+            {ttsAudioUrl && (
+              <audio controls autoPlay src={ttsAudioUrl} className="w-full h-8" />
+            )}
           </div>
         </div>
 
