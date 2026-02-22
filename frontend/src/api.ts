@@ -49,6 +49,113 @@ export async function synthesizeTTS(text: string): Promise<Blob> {
   return res.blob();
 }
 
+type TtsStreamHandle = {
+  url: string;
+  done: Promise<void>;
+  revoke: () => void;
+};
+
+export async function synthesizeTTSStream(text: string): Promise<TtsStreamHandle> {
+  const mimeType = "audio/mpeg";
+  if (typeof MediaSource === "undefined" || !MediaSource.isTypeSupported(mimeType)) {
+    const audioBlob = await synthesizeTTS(text);
+    const url = URL.createObjectURL(audioBlob);
+    return { url, done: Promise.resolve(), revoke: () => URL.revokeObjectURL(url) };
+  }
+
+  const mediaSource = new MediaSource();
+  const url = URL.createObjectURL(mediaSource);
+  let resolveDone: () => void = () => {};
+  let rejectDone: (err: Error) => void = () => {};
+  const done = new Promise<void>((resolve, reject) => {
+    resolveDone = resolve;
+    rejectDone = reject;
+  });
+
+  const startStream = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/tts-stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) {
+        const responseText = await res.text();
+        let msg = responseText;
+        try {
+          const j = JSON.parse(responseText);
+          if (j.detail)
+            msg = Array.isArray(j.detail) ? j.detail.map((d: { msg?: string }) => d.msg).join(" ") : j.detail;
+        } catch {
+          /* use responseText */
+        }
+        throw new Error(msg || `TTS request failed: ${res.status}`);
+      }
+      if (!res.body) {
+        throw new Error("Streaming not supported by this browser.");
+      }
+
+      const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+      const reader = res.body.getReader();
+
+      const appendChunk = (chunk: Uint8Array) =>
+        new Promise<void>((resolve, reject) => {
+          const onError = () => {
+            sourceBuffer.removeEventListener("error", onError);
+            sourceBuffer.removeEventListener("updateend", onUpdateEnd);
+            reject(new Error("Failed to append TTS audio."));
+          };
+          const onUpdateEnd = () => {
+            sourceBuffer.removeEventListener("error", onError);
+            sourceBuffer.removeEventListener("updateend", onUpdateEnd);
+            resolve();
+          };
+          sourceBuffer.addEventListener("error", onError, { once: true });
+          sourceBuffer.addEventListener("updateend", onUpdateEnd, { once: true });
+          const buffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);
+          sourceBuffer.appendBuffer(buffer);
+        });
+
+      while (true) {
+        const { done: streamDone, value } = await reader.read();
+        if (streamDone) break;
+        if (value && value.length > 0) {
+          if (sourceBuffer.updating) {
+            await new Promise<void>((resolve) => sourceBuffer.addEventListener("updateend", () => resolve(), { once: true }));
+          }
+          await appendChunk(value);
+        }
+      }
+
+      if (sourceBuffer.updating) {
+        await new Promise<void>((resolve) => sourceBuffer.addEventListener("updateend", () => resolve(), { once: true }));
+      }
+      mediaSource.endOfStream();
+      resolveDone();
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error("TTS stream failed.");
+      if (mediaSource.readyState === "open") {
+        try {
+          mediaSource.endOfStream("decode");
+        } catch {
+          /* ignore */
+        }
+      }
+      rejectDone(error);
+    }
+  };
+
+  mediaSource.addEventListener(
+    "sourceopen",
+    () => {
+      void startStream();
+    },
+    { once: true }
+  );
+
+  return { url, done, revoke: () => URL.revokeObjectURL(url) };
+}
+
 export async function uploadAndTranscribe(
   file: File,
   applyRadioFilter: boolean,

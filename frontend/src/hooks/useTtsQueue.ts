@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { synthesizeTTS } from "../api";
+import { synthesizeTTSStream } from "../api";
 
 type QueueItem = { text: string; url: string };
 
@@ -70,21 +70,27 @@ export function useTtsQueue(): TtsQueueState {
 
       setGenerating(true);
       setError(null);
-      synthesizeTTS(normalized)
-        .then((audioBlob) => {
-          const url = URL.createObjectURL(audioBlob);
-          cacheRef.current.set(normalized, url);
-          if (cacheRef.current.size > MAX_CACHE_ITEMS) {
-            const oldestKey = cacheRef.current.keys().next().value as string | undefined;
-            if (oldestKey) {
-              const oldestUrl = cacheRef.current.get(oldestKey);
-              if (oldestUrl) URL.revokeObjectURL(oldestUrl);
-              cacheRef.current.delete(oldestKey);
-            }
-          }
+      synthesizeTTSStream(normalized)
+        .then(({ url, done }) => {
           queueRef.current.push({ text: normalized, url });
           syncQueueSize();
           if (!playing) playNext();
+
+          done
+            .then(() => {
+              cacheRef.current.set(normalized, url);
+              if (cacheRef.current.size > MAX_CACHE_ITEMS) {
+                const oldestKey = cacheRef.current.keys().next().value as string | undefined;
+                if (oldestKey) {
+                  const oldestUrl = cacheRef.current.get(oldestKey);
+                  if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+                  cacheRef.current.delete(oldestKey);
+                }
+              }
+            })
+            .catch((e: unknown) => {
+              setError(e instanceof Error ? e.message : "TTS failed.");
+            });
         })
         .catch((e: unknown) => {
           setError(e instanceof Error ? e.message : "TTS failed.");

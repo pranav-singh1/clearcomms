@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { synthesizeTTS, type TranscribeResult, type TtsStatus } from "../api";
+import { synthesizeTTSStream, type TranscribeResult, type TtsStatus } from "../api";
 import { useTtsQueue } from "../hooks/useTtsQueue";
 
 type Props = {
@@ -171,22 +171,27 @@ export function Result({
     setTtsLoading(true);
     setTtsError(null);
     try {
-      const audioBlob = await synthesizeTTS(cleanedTranscript);
-      const url = URL.createObjectURL(audioBlob);
-      ttsCacheRef.current.set(cleanedTranscript, url);
-      if (ttsCacheRef.current.size > 20) {
-        const oldestKey = ttsCacheRef.current.keys().next().value as string | undefined;
-        if (oldestKey) {
-          const oldestUrl = ttsCacheRef.current.get(oldestKey);
-          if (oldestUrl) URL.revokeObjectURL(oldestUrl);
-          ttsCacheRef.current.delete(oldestKey);
-        }
-      }
+      const { url, done } = await synthesizeTTSStream(cleanedTranscript);
       setTtsAudioUrl(url);
+      setTtsLoading(false);
+      void done
+        .then(() => {
+          ttsCacheRef.current.set(cleanedTranscript, url);
+          if (ttsCacheRef.current.size > 20) {
+            const oldestKey = ttsCacheRef.current.keys().next().value as string | undefined;
+            if (oldestKey) {
+              const oldestUrl = ttsCacheRef.current.get(oldestKey);
+              if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+              ttsCacheRef.current.delete(oldestKey);
+            }
+          }
+        })
+        .catch((e: unknown) => {
+          setTtsError(e instanceof Error ? e.message : "TTS failed.");
+        });
     } catch (e: unknown) {
       setTtsError(e instanceof Error ? e.message : "TTS failed.");
       setTtsAudioUrl(null);
-    } finally {
       setTtsLoading(false);
     }
   };
@@ -251,7 +256,7 @@ export function Result({
             </button>
             <div className="text-xs font-mono text-defense-muted">
               {ttsAvailable
-                ? `Model: ${ttsStatus?.model || "aura-2-apollo-en"}`
+                ? `Model: ${ttsStatus?.model || "aura-2-arcas-en"}`
                 : isOffline
                 ? "TTS unavailable offline."
                 : ttsStatus?.reason || "TTS unavailable."}
