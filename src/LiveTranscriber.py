@@ -159,10 +159,11 @@ class LiveTranscriber:
 
         # initialize the model (same as Streamlit UI: ONNX + QNN EP)
         print("Loading model...")
+        variant = config.get("model_variant", "base_en")
         self.model = make_whisper_app(
             self.encoder_path,
             self.decoder_path,
-            "base_en",
+            variant,
             config,
         )
 

@@ -11,3 +11,5 @@
 # model paths
 "encoder_path": "models/WhisperEncoder.onnx"
 "decoder_path": "models/WhisperDecoder.onnx"
+
+model_variant: "base_en"

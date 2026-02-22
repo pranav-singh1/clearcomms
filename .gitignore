@@ -11,6 +11,7 @@
 # Virtual environments
 /whisper-venv/
 /whispr_venv/
+/llama-env/
 venv/
 .venv/
 env/

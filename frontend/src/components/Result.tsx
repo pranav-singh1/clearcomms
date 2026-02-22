@@ -35,12 +35,22 @@ export function Result({
   );
 
   const transcriptIsError = Boolean(result.error);
-  const cleanedTranscript = (result.cleaned_transcript || result.text || "").trim();
+  const rawTranscript = (result.raw_transcript ?? result.text ?? "").trim();
+  const revisedTranscript = (result.revised_transcript ?? "").trim();
+  const cleanedTranscript = (result.revised_transcript ?? result.cleaned_transcript ?? result.text ?? "").trim();
   const cleanedTranscriptRef = useRef(cleanedTranscript);
   const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
   const ttsAvailable = Boolean(ttsStatus?.available);
   const canSpeakCleaned =
     !transcriptIsError && cleanedTranscript.length > 0 && ttsAvailable && ttsEnabled && !ttsLoading;
+  const rawContent = result.error ? `ERR: ${result.error}` : (rawTranscript || "NO TRANSCRIPT_");
+  const llamaError = result.meta?.llama_revision_error;
+  const revisedContent = revisedTranscript
+    ? revisedTranscript
+    : typeof llamaError === "string" && llamaError
+    ? `Llama revision failed: ${llamaError}`
+    : "— Llama revision not run (set ENABLE_LLAMA_REVISION=1 before starting the backend)";
+  const revisedIsError = Boolean(revisedTranscript === "" && llamaError);
   const transcriptContent = result.error
     ? `ERR: ${result.error}`
     : (cleanedTranscript || result.text || "NO TRANSCRIPT_");
@@ -243,10 +253,21 @@ export function Result({
 
       {/* Transcripts & Data */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-        <div className="flex flex-col">
-          <div className="border-b border-defense-border pb-2 mb-4 font-mono text-xs text-white uppercase">Cleaned Transcript</div>
-          <div className={`font-mono text-sm leading-relaxed p-4 bg-defense-900 border ${transcriptIsError ? 'border-red-900/50 text-red-400' : 'border-defense-border text-white'}`}>
-            {transcriptContent}
+        <div className="flex flex-col gap-6">
+          <div>
+            <div className="border-b border-defense-border pb-2 mb-2 font-mono text-xs text-white uppercase">Raw transcript (Whisper)</div>
+            <div className={`font-mono text-sm leading-relaxed p-4 bg-defense-900 border ${transcriptIsError ? "border-red-900/50 text-red-400" : "border-defense-border text-white"}`}>
+              {rawContent}
+            </div>
+          </div>
+          <div>
+            <div className="border-b border-defense-border pb-2 mb-2 font-mono text-xs text-white uppercase">Reconstructed transcript (Llama)</div>
+            <div className={`font-mono text-sm leading-relaxed p-4 bg-defense-900 border ${revisedTranscript ? "border-defense-border text-white" : revisedIsError ? "border-amber-900/50 text-amber-300" : "border-defense-border text-defense-muted"}`}>
+              {revisedContent}
+            </div>
+            {revisedTranscript && (
+              <div className="mt-1 text-xs font-mono text-green-500/90">Llama revision applied.</div>
+            )}
           </div>
           {realtimeTtsEnabled && (
             <div className="mt-3 text-xs font-mono text-defense-muted">
