@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { synthesizeTTS, type TranscribeResult, type TtsStatus } from "../api";
+import { useTtsQueue } from "../hooks/useTtsQueue";
 
 type Props = {
   result: TranscribeResult;
@@ -7,13 +8,24 @@ type Props = {
   applyRadioFilter: boolean;
   ttsEnabled: boolean;
   ttsStatus: TtsStatus | null;
+  realtimeTtsEnabled: boolean;
+  micActive: boolean;
 };
 
-export function Result({ result, originalFile, applyRadioFilter, ttsEnabled, ttsStatus }: Props) {
+export function Result({
+  result,
+  originalFile,
+  applyRadioFilter,
+  ttsEnabled,
+  ttsStatus,
+  realtimeTtsEnabled,
+  micActive,
+}: Props) {
   const [ttsLoading, setTtsLoading] = useState(false);
   const [ttsError, setTtsError] = useState<string | null>(null);
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
   const ttsCacheRef = useRef<Map<string, string>>(new Map());
+  const { enqueue, queueSize, playing, generating, error: realtimeError, clearError } = useTtsQueue();
 
   const originalUrl = useMemo(() => (originalFile ? URL.createObjectURL(originalFile) : null), [originalFile]);
   const filteredUrl = useMemo(
@@ -23,6 +35,7 @@ export function Result({ result, originalFile, applyRadioFilter, ttsEnabled, tts
 
   const transcriptIsError = Boolean(result.error);
   const cleanedTranscript = (result.cleaned_transcript || result.text || "").trim();
+  const cleanedTranscriptRef = useRef(cleanedTranscript);
   const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
   const ttsAvailable = Boolean(ttsStatus?.available);
   const canSpeakCleaned =
@@ -52,11 +65,101 @@ export function Result({ result, originalFile, applyRadioFilter, ttsEnabled, tts
     };
   }, []);
 
+  const lastSpokenFullRef = useRef<string>("");
+  const lastTtsAtRef = useRef<number>(0);
+  const pendingTimerRef = useRef<number | null>(null);
+  const minIntervalMs = 1500;
+  const debounceMs = 600;
+
   useEffect(() => {
     setTtsError(null);
     setTtsLoading(false);
     setTtsAudioUrl(null);
+    lastSpokenFullRef.current = "";
+    lastTtsAtRef.current = 0;
   }, [result]);
+
+  useEffect(() => {
+    cleanedTranscriptRef.current = cleanedTranscript;
+  }, [cleanedTranscript]);
+
+  const isSpeakable = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (trimmed.length < 8) return false;
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    return words.length >= 2;
+  }, []);
+
+  const extractSegment = useCallback((fullText: string, lastFull: string) => {
+    if (lastFull && fullText.startsWith(lastFull)) {
+      return fullText.slice(lastFull.length).trim();
+    }
+    return fullText.trim();
+  }, []);
+
+  useEffect(() => {
+    if (!realtimeTtsEnabled || !micActive || !ttsEnabled || !ttsAvailable || transcriptIsError) {
+      if (pendingTimerRef.current !== null) {
+        window.clearTimeout(pendingTimerRef.current);
+        pendingTimerRef.current = null;
+      }
+      return;
+    }
+    if (!isSpeakable(cleanedTranscript)) return;
+
+    if (pendingTimerRef.current !== null) {
+      window.clearTimeout(pendingTimerRef.current);
+      pendingTimerRef.current = null;
+    }
+
+    let cancelled = false;
+    const attemptSpeak = () => {
+      if (cancelled) return;
+      if (cleanedTranscriptRef.current !== cleanedTranscript) return;
+
+      const sinceLast = Date.now() - lastTtsAtRef.current;
+      if (sinceLast < minIntervalMs) {
+        pendingTimerRef.current = window.setTimeout(attemptSpeak, minIntervalMs - sinceLast);
+        return;
+      }
+
+      const segment = extractSegment(cleanedTranscript, lastSpokenFullRef.current);
+      if (!isSpeakable(segment)) {
+        if (cleanedTranscript.length >= lastSpokenFullRef.current.length) {
+          lastSpokenFullRef.current = cleanedTranscript;
+        }
+        return;
+      }
+
+      lastTtsAtRef.current = Date.now();
+      lastSpokenFullRef.current = cleanedTranscript;
+      enqueue(segment);
+    };
+
+    pendingTimerRef.current = window.setTimeout(attemptSpeak, debounceMs);
+
+    return () => {
+      cancelled = true;
+      if (pendingTimerRef.current !== null) {
+        window.clearTimeout(pendingTimerRef.current);
+        pendingTimerRef.current = null;
+      }
+    };
+  }, [
+    cleanedTranscript,
+    enqueue,
+    extractSegment,
+    isSpeakable,
+    micActive,
+    realtimeTtsEnabled,
+    transcriptIsError,
+    ttsAvailable,
+    ttsEnabled,
+  ]);
+
+  useEffect(() => {
+    if (!realtimeTtsEnabled) clearError();
+  }, [clearError, realtimeTtsEnabled]);
 
   const handleSpeakCleanedTranscript = async () => {
     if (!canSpeakCleaned) return;
@@ -115,6 +218,19 @@ export function Result({ result, originalFile, applyRadioFilter, ttsEnabled, tts
           <div className={`font-mono text-sm leading-relaxed p-4 bg-defense-900 border ${transcriptIsError ? 'border-red-900/50 text-red-400' : 'border-defense-border text-white'}`}>
             {transcriptContent}
           </div>
+          {realtimeTtsEnabled && (
+            <div className="mt-3 text-xs font-mono text-defense-muted">
+              Realtime TTS: ON
+              {queueSize > 0 ? ` · Queue: ${queueSize}` : ""}
+              {generating ? " · Generating speech..." : ""}
+              {playing ? " · Playing" : ""}
+            </div>
+          )}
+          {realtimeTtsEnabled && realtimeError && (
+            <div className="mt-2 p-2 bg-amber-950/30 border border-amber-900/50 text-amber-300 text-xs font-mono">
+              TTS failed (continuing): {realtimeError}
+            </div>
+          )}
           <div className="mt-4 flex flex-col gap-3">
             <button
               type="button"

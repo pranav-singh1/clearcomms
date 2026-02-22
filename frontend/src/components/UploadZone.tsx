@@ -13,6 +13,7 @@ type Props = {
   onTranscribe: () => void;
   loading: boolean;
   disabled: boolean;
+  onMicActiveChange?: (active: boolean) => void;
 };
 
 function fileIsAccepted(file: File): boolean {
@@ -74,7 +75,7 @@ function formatDuration(seconds: number): string {
   return `${mins}:${secs}`;
 }
 
-export function UploadZone({ file, onFileChange, onTranscribe, loading, disabled }: Props) {
+export function UploadZone({ file, onFileChange, onTranscribe, loading, disabled, onMicActiveChange }: Props) {
   const [recording, setRecording] = useState(false);
   const [recordSecs, setRecordSecs] = useState(0);
   const [recordError, setRecordError] = useState<string | null>(null);
@@ -122,12 +123,13 @@ export function UploadZone({ file, onFileChange, onTranscribe, loading, disabled
       const f = e.dataTransfer.files[0];
       if (f && fileIsAccepted(f)) {
         setRecordError(null);
+        onMicActiveChange?.(false);
         onFileChange(f);
       } else if (f) {
         setRecordError("Unsupported file format.");
       }
     },
-    [onFileChange]
+    [onFileChange, onMicActiveChange]
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => e.preventDefault(), []);
@@ -136,16 +138,18 @@ export function UploadZone({ file, onFileChange, onTranscribe, loading, disabled
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const f = e.target.files?.[0];
       if (!f) {
+        onMicActiveChange?.(false);
         onFileChange(null);
       } else if (fileIsAccepted(f)) {
         setRecordError(null);
+        onMicActiveChange?.(false);
         onFileChange(f);
       } else {
         setRecordError("Unsupported file format.");
       }
       e.target.value = "";
     },
-    [onFileChange]
+    [onFileChange, onMicActiveChange]
   );
 
   const startRecording = useCallback(async () => {
@@ -188,12 +192,14 @@ export function UploadZone({ file, onFileChange, onTranscribe, loading, disabled
       sampleRateRef.current = context.sampleRate;
       timerRef.current = window.setInterval(() => setRecordSecs((value) => value + 1), 1000);
       setRecording(true);
+      onMicActiveChange?.(true);
     } catch (error) {
       await teardownRecorder();
       setRecording(false);
       setRecordError(error instanceof Error ? error.message : "Unable to access microphone.");
+      onMicActiveChange?.(false);
     }
-  }, [recording, teardownRecorder]);
+  }, [onMicActiveChange, recording, teardownRecorder]);
 
   const stopRecording = useCallback(async () => {
     if (!recording) return;
@@ -210,6 +216,7 @@ export function UploadZone({ file, onFileChange, onTranscribe, loading, disabled
 
     if (merged.length < MIN_RECORD_SAMPLES) {
       setRecordError("Recording was too short. Please record again.");
+      onMicActiveChange?.(false);
       return;
     }
 
@@ -218,7 +225,8 @@ export function UploadZone({ file, onFileChange, onTranscribe, loading, disabled
     const recordedFile = new File([wavBlob], `mic-${timestamp}.wav`, { type: "audio/wav" });
     setRecordError(null);
     onFileChange(recordedFile);
-  }, [onFileChange, recording, teardownRecorder]);
+    onMicActiveChange?.(true);
+  }, [onFileChange, onMicActiveChange, recording, teardownRecorder]);
 
   useEffect(() => {
     return () => {
@@ -228,6 +236,7 @@ export function UploadZone({ file, onFileChange, onTranscribe, loading, disabled
       void teardownRecorder();
     };
   }, [teardownRecorder]);
+
 
   return (
     <div className="flex flex-col gap-4">

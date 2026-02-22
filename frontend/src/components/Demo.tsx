@@ -13,6 +13,8 @@ export function Demo() {
   const [loading, setLoading] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [ttsState, setTtsState] = useState<TtsStatus | null>(null);
+  const [realtimeTtsEnabled, setRealtimeTtsEnabled] = useState(false);
+  const [micActive, setMicActive] = useState(false);
 
   useEffect(() => {
     ttsStatus()
@@ -25,6 +27,12 @@ export function Demo() {
         setTtsEnabled(false);
       });
   }, []);
+
+  useEffect(() => {
+    if (!ttsEnabled || !ttsState?.available || !micActive) {
+      setRealtimeTtsEnabled(false);
+    }
+  }, [micActive, ttsEnabled, ttsState]);
 
   const handleFileChange = useCallback((f: File | null) => {
     setFile(f);
@@ -66,6 +74,9 @@ export function Demo() {
               ttsEnabled={ttsEnabled}
               setTtsEnabled={setTtsEnabled}
               ttsStatus={ttsState}
+              realtimeTtsEnabled={realtimeTtsEnabled}
+              setRealtimeTtsEnabled={setRealtimeTtsEnabled}
+              micActive={micActive}
             />
           </div>
           
@@ -77,6 +88,7 @@ export function Demo() {
               onTranscribe={handleSubmit}
               loading={loading}
               disabled={!file}
+              onMicActiveChange={setMicActive}
             />
             {error && (
               <div className="mt-4 p-3 bg-red-950/30 border border-red-900/50 text-red-500 text-sm font-mono">
@@ -104,6 +116,8 @@ export function Demo() {
                   applyRadioFilter={applyRadioFilter}
                   ttsEnabled={ttsEnabled}
                   ttsStatus={ttsState}
+                  realtimeTtsEnabled={realtimeTtsEnabled}
+                  micActive={micActive}
                 />
               )
             )}
