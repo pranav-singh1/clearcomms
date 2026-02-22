@@ -7,7 +7,6 @@ export type TranscribeResult = {
   error: string | null;
   text: string;
   meta: Record<string, number | string>;
-  audio_prepared_b64: string | null;
   audio_filtered_b64: string | null;
   apply_radio_filter: boolean;
   duration_sec: number;

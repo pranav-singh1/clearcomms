@@ -44,7 +44,7 @@ export function Controls({
         />
         <div className="flex flex-col gap-1">
           <span className="text-white group-hover:text-defense-accent transition-colors">Peak Normalization</span>
-          <span className="text-xs text-defense-muted">Auto-scale to 16kHz</span>
+          <span className="text-xs text-defense-muted">Auto-level input loudness before ASR</span>
         </div>
       </label>
 
