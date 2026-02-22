@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { synthesizeTTSStream, type TranscribeResult, type TtsStatus } from "../api";
+import { synthesizeTTSStream, reviseTranscript, type TranscribeResult, type TtsStatus } from "../api";
 import { useTtsQueue } from "../hooks/useTtsQueue";
 
 type Props = {
@@ -24,6 +24,10 @@ export function Result({
   const [ttsLoading, setTtsLoading] = useState(false);
   const [ttsError, setTtsError] = useState<string | null>(null);
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
+  const [revisionLoading, setRevisionLoading] = useState(false);
+  const [localRevisedTranscript, setLocalRevisedTranscript] = useState<string | null>(null);
+  const [localRevisionError, setLocalRevisionError] = useState<string | null>(null);
+  const revisionRequestRef = useRef<string | null>(null);
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsCacheRef = useRef<Map<string, string>>(new Map());
   const { enqueue, queueSize, playing, generating, error: realtimeError, clearError } = useTtsQueue();
@@ -36,24 +40,25 @@ export function Result({
 
   const transcriptIsError = Boolean(result.error);
   const rawTranscript = (result.raw_transcript ?? result.text ?? "").trim();
-  const revisedTranscript = (result.revised_transcript ?? "").trim();
-  const cleanedTranscript = (result.revised_transcript ?? result.cleaned_transcript ?? result.text ?? "").trim();
-  const cleanedTranscriptRef = useRef(cleanedTranscript);
+  const revisedTranscript = (localRevisedTranscript ?? result.revised_transcript ?? "").trim();
+  const transcriptForTts = (result.raw_transcript ?? result.text ?? "").trim();
+  const cleanedTranscriptRef = useRef(transcriptForTts);
   const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
   const ttsAvailable = Boolean(ttsStatus?.available);
   const canSpeakCleaned =
-    !transcriptIsError && cleanedTranscript.length > 0 && ttsAvailable && ttsEnabled && !ttsLoading;
+    !transcriptIsError && transcriptForTts.length > 0 && ttsAvailable && ttsEnabled && !ttsLoading;
   const rawContent = result.error ? `ERR: ${result.error}` : (rawTranscript || "NO TRANSCRIPT_");
-  const llamaError = result.meta?.llama_revision_error;
-  const revisedContent = revisedTranscript
+  const llamaError = localRevisionError ?? result.meta?.llama_revision_error;
+  const revisedContent = revisionLoading
+    ? "Loading..."
+    : revisedTranscript
     ? revisedTranscript
     : typeof llamaError === "string" && llamaError
     ? `Llama revision failed: ${llamaError}`
+    : result.llama_revision_available
+    ? "— Waiting for Llama..."
     : "— Llama revision not run (set ENABLE_LLAMA_REVISION=1 before starting the backend)";
-  const revisedIsError = Boolean(revisedTranscript === "" && llamaError);
-  const transcriptContent = result.error
-    ? `ERR: ${result.error}`
-    : (cleanedTranscript || result.text || "NO TRANSCRIPT_");
+  const revisedIsError = Boolean(!revisionLoading && revisedTranscript === "" && llamaError);
 
   // Simulated structured data based on the prompt "Cleaned transcript, Structured JSON output"
   const structuredData = useMemo(() => {
@@ -88,6 +93,36 @@ export function Result({
     setTtsAudioUrl(null);
     lastSpokenFullRef.current = "";
     lastTtsAtRef.current = 0;
+
+    setLocalRevisedTranscript(null);
+    setLocalRevisionError(null);
+    revisionRequestRef.current = null;
+
+    const raw = (result.raw_transcript ?? result.text ?? "").trim();
+    const shouldRevise =
+      result.llama_revision_available &&
+      raw &&
+      raw !== "(no transcript)" &&
+      !result.error;
+    if (shouldRevise) {
+      revisionRequestRef.current = raw;
+      setRevisionLoading(true);
+      reviseTranscript(raw)
+        .then((r) => {
+          if (revisionRequestRef.current === raw) {
+            setLocalRevisedTranscript(r.revised_transcript);
+            setRevisionLoading(false);
+          }
+        })
+        .catch((e: unknown) => {
+          if (revisionRequestRef.current === raw) {
+            setLocalRevisionError(e instanceof Error ? e.message : "Revision failed.");
+            setRevisionLoading(false);
+          }
+        });
+    } else {
+      setRevisionLoading(false);
+    }
   }, [result]);
 
   useEffect(() => {
@@ -115,8 +150,8 @@ export function Result({
   }, [ttsAudioUrl]);
 
   useEffect(() => {
-    cleanedTranscriptRef.current = cleanedTranscript;
-  }, [cleanedTranscript]);
+    cleanedTranscriptRef.current = transcriptForTts;
+  }, [transcriptForTts]);
 
   const isSpeakable = useCallback((text: string) => {
     const trimmed = text.trim();
@@ -140,7 +175,7 @@ export function Result({
       }
       return;
     }
-    if (!isSpeakable(cleanedTranscript)) return;
+    if (!isSpeakable(transcriptForTts)) return;
 
     if (pendingTimerRef.current !== null) {
       window.clearTimeout(pendingTimerRef.current);
@@ -150,7 +185,7 @@ export function Result({
     let cancelled = false;
     const attemptSpeak = () => {
       if (cancelled) return;
-      if (cleanedTranscriptRef.current !== cleanedTranscript) return;
+      if (cleanedTranscriptRef.current !== transcriptForTts) return;
 
       const sinceLast = Date.now() - lastTtsAtRef.current;
       if (sinceLast < minIntervalMs) {
@@ -158,16 +193,16 @@ export function Result({
         return;
       }
 
-      const segment = extractSegment(cleanedTranscript, lastSpokenFullRef.current);
+      const segment = extractSegment(transcriptForTts, lastSpokenFullRef.current);
       if (!isSpeakable(segment)) {
-        if (cleanedTranscript.length >= lastSpokenFullRef.current.length) {
-          lastSpokenFullRef.current = cleanedTranscript;
+        if (transcriptForTts.length >= lastSpokenFullRef.current.length) {
+          lastSpokenFullRef.current = transcriptForTts;
         }
         return;
       }
 
       lastTtsAtRef.current = Date.now();
-      lastSpokenFullRef.current = cleanedTranscript;
+      lastSpokenFullRef.current = transcriptForTts;
       enqueue(segment);
     };
 
@@ -181,7 +216,7 @@ export function Result({
       }
     };
   }, [
-    cleanedTranscript,
+    transcriptForTts,
     enqueue,
     extractSegment,
     isSpeakable,
@@ -198,7 +233,7 @@ export function Result({
 
   const handleSpeakCleanedTranscript = async () => {
     if (!canSpeakCleaned) return;
-    const cached = ttsCacheRef.current.get(cleanedTranscript);
+    const cached = ttsCacheRef.current.get(transcriptForTts);
     if (cached) {
       setTtsAudioUrl(cached);
       return;
@@ -206,12 +241,12 @@ export function Result({
     setTtsLoading(true);
     setTtsError(null);
     try {
-      const { url, done } = await synthesizeTTSStream(cleanedTranscript);
+      const { url, done } = await synthesizeTTSStream(transcriptForTts);
       setTtsAudioUrl(url);
       setTtsLoading(false);
       void done
         .then(() => {
-          ttsCacheRef.current.set(cleanedTranscript, url);
+          ttsCacheRef.current.set(transcriptForTts, url);
           if (ttsCacheRef.current.size > 20) {
             const oldestKey = ttsCacheRef.current.keys().next().value as string | undefined;
             if (oldestKey) {
@@ -262,10 +297,10 @@ export function Result({
           </div>
           <div>
             <div className="border-b border-defense-border pb-2 mb-2 font-mono text-xs text-white uppercase">Reconstructed transcript (Llama)</div>
-            <div className={`font-mono text-sm leading-relaxed p-4 bg-defense-900 border ${revisedTranscript ? "border-defense-border text-white" : revisedIsError ? "border-amber-900/50 text-amber-300" : "border-defense-border text-defense-muted"}`}>
+            <div className={`font-mono text-sm leading-relaxed p-4 bg-defense-900 border ${revisionLoading ? "border-defense-accent/50 text-defense-muted animate-pulse" : revisedTranscript ? "border-defense-border text-white" : revisedIsError ? "border-amber-900/50 text-amber-300" : "border-defense-border text-defense-muted"}`}>
               {revisedContent}
             </div>
-            {revisedTranscript && (
+            {!revisionLoading && revisedTranscript && (
               <div className="mt-1 text-xs font-mono text-green-500/90">Llama revision applied.</div>
             )}
           </div>
@@ -292,8 +327,8 @@ export function Result({
                   ? "TTS is disabled in settings."
                   : !ttsAvailable
                   ? (isOffline ? "TTS unavailable offline." : ttsStatus?.reason || "TTS unavailable.")
-                  : cleanedTranscript.length === 0
-                  ? "No cleaned transcript to speak."
+                  : transcriptForTts.length === 0
+                  ? "No transcript to speak."
                   : undefined
               }
               className="px-4 py-2 border border-defense-border bg-defense-800 text-xs font-mono text-white hover:bg-defense-700 transition disabled:opacity-50 disabled:cursor-not-allowed text-left"

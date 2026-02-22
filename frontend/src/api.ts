@@ -10,6 +10,7 @@ export type TranscribeResult = {
   cleaned_transcript?: string;
   raw_transcript?: string | null;
   revised_transcript?: string | null;
+  llama_revision_available?: boolean;
   meta: Record<string, number | string>;
   audio_filtered_b64: string | null;
   apply_radio_filter: boolean;
@@ -189,5 +190,25 @@ export async function uploadAndTranscribe(
     throw new Error(msg || `Request failed: ${res.status}`);
   }
 
+  return res.json();
+}
+
+export async function reviseTranscript(transcript: string): Promise<{ revised_transcript: string }> {
+  const res = await fetch(`${API_BASE}/api/revise`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transcript }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = text;
+    try {
+      const j = JSON.parse(text);
+      if (j.detail) msg = Array.isArray(j.detail) ? j.detail.map((d: { msg?: string }) => d.msg).join(" ") : j.detail;
+    } catch {
+      /* use text */
+    }
+    throw new Error(msg || `Revision failed: ${res.status}`);
+  }
   return res.json();
 }
