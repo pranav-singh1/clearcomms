@@ -5,7 +5,6 @@ Exposes transcription and model-status; keeps on-device inference unchanged.
 from __future__ import annotations
 
 import base64
-import json
 import os
 import tempfile
 import time
@@ -88,11 +87,8 @@ async def api_transcribe(
         else:
             asr_input = pre16_path
 
-        # Always encode preprocessed clips for playback (even if transcribe fails)
-        audio_prepared_b64 = None
+        # Keep preprocessed clip internal; return only user-facing streams.
         audio_filtered_b64 = None
-        if pre16_path.exists():
-            audio_prepared_b64 = base64.b64encode(pre16_path.read_bytes()).decode("utf-8")
         if apply_radio and filt_path.exists():
             audio_filtered_b64 = base64.b64encode(filt_path.read_bytes()).decode("utf-8")
 
@@ -102,7 +98,6 @@ async def api_transcribe(
             "error": None,
             "text": "",
             "meta": {},
-            "audio_prepared_b64": audio_prepared_b64,
             "audio_filtered_b64": audio_filtered_b64,
             "apply_radio_filter": apply_radio,
             "duration_sec": duration_sec,

@@ -9,10 +9,6 @@ type Props = {
 
 export function Result({ result, originalFile, applyRadioFilter }: Props) {
   const originalUrl = useMemo(() => (originalFile ? URL.createObjectURL(originalFile) : null), [originalFile]);
-  const preparedUrl = useMemo(
-    () => (result.audio_prepared_b64 ? `data:audio/wav;base64,${result.audio_prepared_b64}` : null),
-    [result.audio_prepared_b64]
-  );
   const filteredUrl = useMemo(
     () => (result.audio_filtered_b64 ? `data:audio/wav;base64,${result.audio_filtered_b64}` : null),
     [result.audio_filtered_b64]
@@ -46,17 +42,10 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
           </div>
           {originalUrl ? <audio controls src={originalUrl} className="w-full h-8 outline-none" /> : <div className="text-xs text-defense-muted">N/A</div>}
         </div>
-        
-        <div className="flex flex-col gap-2 p-4 bg-defense-900 border border-defense-border">
-          <div className="font-mono text-xs text-defense-muted uppercase flex justify-between">
-            <span>Stream_02 (16kHz)</span>
-          </div>
-          {preparedUrl ? <audio controls src={preparedUrl} className="w-full h-8" /> : <div className="text-xs text-defense-muted">N/A</div>}
-        </div>
 
         {applyRadioFilter && (
-          <div className="flex flex-col gap-2 p-4 bg-defense-900 border border-defense-border md:col-span-2">
-            <div className="font-mono text-xs text-defense-accent uppercase">Stream_03 (DSP Processed)</div>
+          <div className="flex flex-col gap-2 p-4 bg-defense-900 border border-defense-border">
+            <div className="font-mono text-xs text-defense-accent uppercase">Stream_02 (DSP Processed)</div>
             {filteredUrl ? <audio controls src={filteredUrl} className="w-full h-8" /> : <div className="text-xs text-defense-muted">N/A</div>}
           </div>
         )}

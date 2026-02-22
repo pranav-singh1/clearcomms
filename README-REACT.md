@@ -34,10 +34,11 @@ All changes are on the **revised-frontend** branch.
 ## Features (unchanged)
 
 - Upload audio (WAV, FLAC, OGG, MP3, M4A)
+- Record audio directly from microphone (saved as WAV client-side)
 - Optional radio preprocess (bandpass + gate) and peak normalization
 - Whisper transcription via ONNX (QNN/NPU when models are in `models/`)
 - Transcript, performance metrics, and export (transcript.txt, metadata.json)
-- Audio playback: original, prepared 16 kHz, and (if enabled) radio-filtered
+- Audio playback: original input and (if enabled) radio-filtered output
 
 ## Design
 

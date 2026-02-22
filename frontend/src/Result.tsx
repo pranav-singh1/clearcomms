@@ -10,10 +10,6 @@ type Props = {
 
 export function Result({ result, originalFile, applyRadioFilter }: Props) {
   const originalUrl = useMemo(() => (originalFile ? URL.createObjectURL(originalFile) : null), [originalFile]);
-  const preparedUrl = useMemo(
-    () => (result.audio_prepared_b64 ? `data:audio/wav;base64,${result.audio_prepared_b64}` : null),
-    [result.audio_prepared_b64]
-  );
   const filteredUrl = useMemo(
     () => (result.audio_filtered_b64 ? `data:audio/wav;base64,${result.audio_filtered_b64}` : null),
     [result.audio_filtered_b64]
@@ -55,13 +51,6 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
           <p className="result-caption">
             Loaded: {result.sample_rate_original} Hz, {result.duration_sec}s
           </p>
-
-          <h3 className="result-heading">Prepared (16 kHz mono)</h3>
-          {preparedUrl ? (
-            <audio controls src={preparedUrl} className="result-audio" />
-          ) : (
-            <p className="result-caption">Not available</p>
-          )}
 
           <h3 className="result-heading">Radio preprocess (filtered / noised clip)</h3>
           {applyRadioFilter && filteredUrl ? (
