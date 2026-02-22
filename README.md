@@ -1,158 +1,283 @@
-# Live Transcription with AI Hub Whisper
+# ClearComms
 
-Streaming transcription application built with [Whisper Base En](https://aihub.qualcomm.com/compute/models/whisper_base_en?domain=Audio) from [Qualcomm AI Hub](https://aihub.qualcomm.com/).
+**Fully offline AI that converts noisy radio communication into accurate transcripts and structured incident summaries.** Optimized to run locally on Qualcomm AI laptops with no internet connection.
 
-### Table of Contents
-[1. Purpose](#purpose)<br>
-[2. Code Organization](#code-organization)<br>
-[3. Implementation](#implementation)<br>
-[4. Setup](#setup)<br>
-[5. Usage](#usage)<br>
-[6. Building an Executable](#building-an-executable)<br>
-[7. Contributing](#contributing)<br>
-[8. Code of Conduct](#code-of-conduct)<br>
+This project improves transcription reliability in emergency and field communication using optimized on-device speech recognition and local language models. It is based on [simple-whisper-transcription](https://github.com/thatrandomfrenchdude/simple-whisper-transcription) and extends it with structured extraction via on-device LLaMA (Qualcomm Genie).
 
-### Purpose
-This is an extensible base app for custom language transcription workflows using Whisper. Base performance is acceptable and can be improved.
+---
 
-### Code Organization
-This project provides two main implementations:
+## Table of Contents
 
-**AI Hub Version (Original)**
-- `src/LiveTranscriber.py` - Main transcriber using Qualcomm AI Hub
-- `src/model.py` - ONNX model wrapper with QNN optimization
-- Requires AI Hub dependencies
+- [Problem](#problem)
+- [Solution](#solution)
+- [Key Features](#key-features)
+- [Tech Stack](#tech-stack)
+- [What You Need Installed](#what-you-need-installed)
+- [Quick Start: Run Backend & Frontend](#quick-start-run-backend--frontend)
+- [Whisper Models (ONNX)](#whisper-models-onnx)
+- [Optional: On-Device LLaMA (Genie)](#optional-on-device-llama-genie)
+- [Optional: TTS (Deepgram)](#optional-tts-deepgram)
+- [Code Organization](#code-organization)
+- [Datasets & References](#datasets--references)
+- [Building an Executable](#building-an-executable)
+- [Contributing](#contributing)
 
-**Standalone Version (No AI Hub)**
-- `src/LiveTranscriber_standalone.py` - Standalone transcriber without AI Hub
-- `src/standalone_model.py` - Independent ONNX model wrapper
-- `src/standalone_whisper.py` - Custom Whisper implementation
-- No AI Hub dependencies required
+---
 
-Both versions use the same ONNX model files and configuration but have different dependency requirements.
+## Problem
 
-### Implementation
-This app was built for the Snapdragon X Elite but designed to be platform agnostic. Performance may vary on other hardware.
+First responders and field teams rely on radios that produce noisy, clipped, and hard-to-understand audio. This leads to:
 
-- Machine: Dell Latitude 7455
-- Chip: Snapdragon X Elite
-- OS: Windows 11
-- Memory: 32 GB
-- Python Version: 3.11.9 (x86)
+- Misheard instructions  
+- Missed location or hazard details  
+- Slower and less effective response  
 
-### Setup
-1. Download & Extract [FFMPeg for Windows](https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip).
-    1. Extract the zip to `C:\Program Files`
-    2. Rename `ffmpeg-master-latest-win64-gpl` to `ffmpeg`
-    3. Add `C:\Program Files\ffmpeg\bin` to your $PATH
-        1. Click the Windows button and search "Edit environment variables"
-        2. Click "Edit environment variables for your account"
-        3. In User variables, choose `Path` and click edit
-        4. Click new to make an entry with `C:\Program Files\ffmpeg\bin`
-        5. Click OK to save
-        6. In a new PowerShell, run ffmpeg to verify installation
-2. Open a PowerShell instance and clone the repo
-    ```
-    git clone https://github.com/thatrandomfrenchdude/simple-whisper-transcription.git
-    ```
-3. Create and activate your virtual environment with reqs
-    ```
-    # 1. navigate to the cloned directory
-    cd simple-whisper-transcription
+Internet access is often unavailable in these environments, making cloud solutions unreliable.
 
-    # 2. create the python virtual environment
-    python -m venv whisper-venv
+**ClearComms** solves this by running transcription and structuring **fully on device**.
 
-    # 3. activate the virtual environment
-    ./whisper-venv/Scripts/Activate.ps1     # windows
+---
 
-    # 4. install the requirements
-    pip install -r requirements.txt
-    ```
-4. Download the model from AI Hub*
-    1. Create a directory called `models` at the project root
-    2. From the project root, run `python -m qai_hub_models.models.whisper_base_en.export --target-runtime onnx`
-    3. Copy the model files from `build` to `models`
-    
-    *NOTE: There is a bug in some versions of AI Hub that may cause the model not to work. If you encounter any issues, try downloading these preconverted models from [this google drive](https://drive.google.com/drive/folders/14RzasqSFfgO4Wtbw_tZ1Qs3Y22F8lymY?usp=sharing) and **skip straight to step 5**.
-5. Create your `config.yaml` file with the following variables
-    ```
-    # audio settings
-    "sample_rate": 16000          # Audio sample rate in Hz
-    "chunk_duration": 4           # Duration of each audio chunk in seconds
-    "channels": 1                 # Number of audio channels (1 for mono)
+## Solution
 
-    # processing settings
-    "max_workers": 4              # Number of parallel transcription workers
-    "silence_threshold": 0.001    # Threshold for silence detection
-    "queue_timeout": 1.0          # Timeout for audio queue operations
+ClearComms processes radio audio through three local stages:
 
-    # model paths
-    "encoder_path": "models/WhisperEncoder.onnx"
-    "decoder_path": "models/WhisperDecoder.onnx"
-    ```
+### 1. Offline Speech Recognition
 
-### Usage
+Audio is transcribed locally using an optimized Whisper model (e.g. [Whisper Base En](https://aihub.qualcomm.com/compute/models/whisper_base_en?domain=Audio) from Qualcomm AI Hub, or Whisper large-v3-turbo).
 
-#### AI Hub Version (Original)
-With the virtual environment active, run the original AI Hub version:
+Engineering focus includes:
+
+- Running Whisper with **ONNX Runtime** (QNN/NPU on Qualcomm hardware)
+- Model optimization and quantization
+- Parameter tuning for noisy radio audio
+- Low-latency on-device inference
+
+### 2. Structured Incident Extraction
+
+The transcript can be processed by a **local LLM** (e.g. LLaMA via Qualcomm Genie) to turn raw speech into structured outputs.
+
+**Example**
+
+| Raw transcript | Structured output |
+|----------------|-------------------|
+| *unit 12 need backup at 5th street possible fire* | **Location:** 5th Street<br>**Request:** Backup<br>**Incident:** Fire<br>**Urgency:** High |
+
+This makes communication faster to interpret and act on.
+
+### 3. Offline End-to-End Pipeline
+
 ```
-python src\LiveTranscriber.py 
+Radio Audio
+    ↓
+Whisper (ONNX, on device)
+    ↓
+Transcript
+    ↓
+Local LLaMA (Genie) [optional]
+    ↓
+Structured incident / action summary
 ```
 
-#### Standalone Version (No AI Hub)
-With the virtual environment active, run the standalone version:
-```
-python src\LiveTranscriber_standalone.py 
+Everything runs fully offline.
+
+---
+
+## Key Features
+
+- **Fully offline operation** — No internet required for transcription or LLaMA.
+- **Optimized Whisper** — ONNX Runtime with QNN/NPU on Qualcomm hardware.
+- **Structured extraction** — On-device LLaMA (Genie) for action items and suggested actions.
+- **Designed for Qualcomm AI hardware** — Snapdragon X Elite (e.g. Dell Latitude 7455).
+- **Fast, reliable transcription** in noisy environments.
+- **Simple UI** — React (Vite) frontend, FastAPI backend; upload or record, then see raw transcript + Llama output.
+
+---
+
+## Tech Stack
+
+- **Python** (backend, pipeline)
+- **Whisper** (ONNX Runtime, Qualcomm AI Hub / QNN)
+- **LLaMA** (local inference via Qualcomm Genie)
+- **FastAPI** (backend API)
+- **React + Vite** (frontend)
+- **Qualcomm AI Hub** tools, ONNX Runtime
+
+---
+
+## What You Need Installed
+
+- **Python 3.11** (recommended; project uses 3.11.9 on Windows)
+- **Node.js & npm** (for the React frontend)
+- **FFmpeg** — for audio. On Windows: download from [FFmpeg Windows builds](https://github.com/BtbN/FFmpeg-Builds/releases), extract (e.g. to `C:\Program Files\ffmpeg`), and add the `bin` folder to your PATH.
+- **Qualcomm AI / QAIRT** (for Genie/Llama; only if using on-device LLaMA)
+- **Windows** (tested on Windows 11; Snapdragon X Elite)
+
+No GPU or cloud account required for core transcription; NPU/Genie are used when available.
+
+---
+
+## Quick Start: Run Backend & Frontend
+
+### 1. Clone and prepare Python env
+
+```powershell
+git clone https://github.com/thatrandomfrenchdude/simple-whisper-transcription.git
+cd simple-whisper-transcription
+
+python -m venv whisper-venv
+.\whisper-venv\Scripts\Activate.ps1   # Windows
+
+pip install -r requirements.txt
+pip install fastapi uvicorn[standard] python-multipart
 ```
 
-Both versions provide the same functionality but use different model loading approaches. The standalone version is more portable and doesn't require AI Hub dependencies.
+### 2. Whisper models (required for transcription)
 
-#### TTS Environment Variables
-To configure Deepgram TTS in the backend:
+- Create a `models` folder at the project root.
+- Add ONNX encoder/decoder (e.g. from Qualcomm AI Hub or your own export).  
+  Example (AI Hub):  
+  `python -m qai_hub_models.models.whisper_base_en.export --target-runtime onnx`  
+  then copy the generated encoder/decoder from `build` into `models`.
+- If you use a different variant (e.g. large-v3-turbo), point `config.yaml` at those ONNX files and set `model_variant` accordingly.
+
+### 3. Config
+
+Create `config.yaml` in the project root (see [Whisper Models (ONNX)](#whisper-models-onnx) for a minimal example). At minimum you need `encoder_path` and `decoder_path` under `models/`.
+
+### 4. Start the backend
+
+From the **project root**, with the venv activated:
+
+```powershell
+uvicorn backend.main:app --reload --host 127.0.0.1 --port 8001
 ```
-export DEEPGRAM_TTS_MODEL=aura-2-arcas-en
-export DEEPGRAM_TTS_SPEED=1.15
+
+If port 8001 is in use (e.g. `WinError 10013`), use another port (e.g. `--port 5000`) and set the same port in `frontend/vite.config.ts` → `proxy["/api"].target`.
+
+### 5. Start the frontend
+
+In a **second terminal**:
+
+```powershell
+cd frontend
+npm install
+npm run dev
 ```
 
-### Building an Executable
-To create a standalone executable that can run without Python installed:
+Open **http://localhost:5173**. The UI proxies `/api` to the backend. You can upload audio (WAV, FLAC, OGG, MP3, M4A) or record from the microphone, then run the pipeline and see the raw transcript and (if enabled) the Llama-revised output.
 
-1. **With your virtual environment activated**, run the build script:
+---
+
+## Whisper Models (ONNX)
+
+- **Sample rate:** 16 kHz mono (handled by the pipeline).
+- **Config:** In `config.yaml` set at least:
+  - `encoder_path`: e.g. `models/WhisperEncoder.onnx`
+  - `decoder_path`: e.g. `models/WhisperDecoder.onnx`
+  - Optionally `model_variant` (e.g. `base_en` or `large_v3_turbo`) to match your ONNX export.
+- **Hardware:** Built and tested on Snapdragon X Elite (e.g. Dell Latitude 7455, 32 GB RAM, Windows 11). ONNX runs with QNN when the models are present; otherwise CPU fallback.
+
+---
+
+## Optional: On-Device LLaMA (Genie)
+
+The app can run **Qualcomm Genie** (`genie-t2t-run.exe`) to revise or structure the Whisper transcript (e.g. action items, suggested actions). Genie is a native executable; Python only shells out—no separate Python venv for Llama.
+
+### Setup Genie (PowerShell)
+
+1. **Dot-source the env script** so `genie-t2t-run.exe` is on PATH:
    ```powershell
-   # PowerShell (recommended)
-   .\build.ps1
-   
-   # Or Command Prompt
-   build.bat
-   
-   # Or manually
-   python build_executable.py
+   . .\scripts\setup_genie_env.ps1
+   ```
+2. **Set the Genie bundle directory** (folder with `genie_config.json`):
+   ```powershell
+   $env:GENIE_BUNDLE_DIR = "C:\path\to\your\llama\bundle"
    ```
 
-2. **Find your executable** in the `dist` folder:
-   - `WhisperTranscriber.exe` - The main executable
-   - `launch_transcriber.bat` - Launcher that keeps console open
+### Test revision
 
-3. **Copy the config file, mel_filters.npz, and models folder** to the `dist` folder:
-   - `config.yaml`
-   - `mel_filters.npz`
-   - `models/` (entire folder)
+```powershell
+python scripts/run_llama_revision.py --text "bravo two copy that we are oscar mike"
+```
 
-4. **Run the executable**:
-   - Double-click `WhisperTranscriber.exe` for direct execution
-   - Double-click `launch_transcriber.bat` for better user experience (recommended)
+### Enable in the app
 
-5. **For distribution**: Copy the entire `dist` folder to other computers. The executable includes all dependencies and will show transcription in a command-line interface.
+Before starting the backend:
 
-For detailed build instructions and troubleshooting, see [BUILD_EXECUTABLE.md](BUILD_EXECUTABLE.md).
+```powershell
+$env:ENABLE_LLAMA_REVISION = "1"
+uvicorn backend.main:app --reload --host 127.0.0.1 --port 8001
+```
 
-### Contributing
-Contributions to extend the functionality are welcome and encouraged. Please review the [contribution guide](CONTRIBUTING.md) prior to submitting a pull request. 
+The frontend will show the raw Whisper transcript immediately and display **Loading...** in the “Reconstructed transcript (Llama)” box until the revision request returns. Optional env: `GENIE_CONFIG`, `GENIE_EXE`, `GENIE_TIMEOUT_S` (see `llama_on_device/README.md`).
 
-Please do your best to maintain the "base template" spirit of the app so that it remains a blank canvas for developers looking to build a custom local chat app.
+---
 
-### Code of Conduct
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](code_of_conduct.md)
+## Optional: TTS (Deepgram)
 
-This project follows the [Contributor Covenant](https://www.contributor-covenant.org/). Read more about it in the [code of conduct](CODE_OF_CONDUCT.md) file.
+The React UI can speak the **Whisper** transcript (TTS uses the raw transcript, not the Llama output). TTS is **online** (Deepgram); the rest of the pipeline stays offline.
+
+In the same terminal where you start the backend (venv activated):
+
+**PowerShell:**
+
+```powershell
+$env:DEEPGRAM_API_KEY = "dg_..."
+$env:DEEPGRAM_TTS_MODEL = "aura-2-arcas-en"
+uvicorn backend.main:app --reload --host 127.0.0.1 --port 8001
+```
+
+If `DEEPGRAM_API_KEY` is not set, the TTS button is disabled in the UI.
+
+---
+
+## Code Organization
+
+- **Backend:** `backend/main.py` — FastAPI app; transcribe endpoint, optional `/api/revise` for Llama, TTS endpoints.
+- **Pipeline:** `pipeline/asr.py` (Whisper), `pipeline/enhance.py` (radio DSP), `pipeline/audio_io.py` (load/resample/save).
+- **Whisper model:** `src/model.py` — ONNX + QNN wrapper; supports base_en and large_v3_turbo (and variants via config).
+- **Live CLI:** `src/LiveTranscriber.py` — Live mic → Whisper (no React).
+- **Llama on device:** `llama_on_device/` — Prompts and Genie subprocess (`genie_llama.py`, `prompts.py`).
+- **Frontend:** `frontend/` — React (Vite); upload/record, transcribe, show raw + reconstructed transcript, latency, export.
+
+---
+
+## Datasets & References
+
+- **LibriSpeech ASR corpus** (OpenSLR 12): [https://www.openslr.org/12](https://www.openslr.org/12) — Large-scale (1000 hours) read English speech at 16 kHz; useful for training or evaluating ASR in clean and “other” conditions.
+- **Whisper:** Qualcomm AI Hub [Whisper Base En](https://aihub.qualcomm.com/compute/models/whisper_base_en?domain=Audio); OpenAI Whisper large-v3-turbo for larger models.
+- **Base repo:** [simple-whisper-transcription](https://github.com/thatrandomfrenchdude/simple-whisper-transcription).
+
+---
+
+## Building an Executable
+
+To build a standalone Whisper transcriber (no React/backend):
+
+1. With the venv activated: `.\build.ps1` or `python build_executable.py`
+2. Find `WhisperTranscriber.exe` in `dist/`
+3. Copy `config.yaml`, `mel_filters.npz`, and the `models/` folder into `dist/`
+4. Run the executable (see [BUILD_EXECUTABLE.md](BUILD_EXECUTABLE.md) for details)
+
+---
+
+## Demo Summary
+
+- **Input:** Noisy walkie-talkie (or any) audio — upload or record from the mic.  
+- **Output:** Raw transcript (Whisper) + optional structured/revised summary (Llama), plus latency and export.  
+- **Environment:** All core processing runs locally with no internet.
+
+---
+
+## Why It Matters
+
+ClearComms makes critical communication understandable and actionable in the exact environments where reliability matters most: when networks are down, latency is critical, and every word can change the outcome.
+
+---
+
+## Contributing
+
+Contributions are welcome. Please review [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
+
+This project follows the [Contributor Covenant](https://www.contributor-covenant.org/) ([code of conduct](CODE_OF_CONDUCT.md)).
