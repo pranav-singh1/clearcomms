@@ -5,11 +5,17 @@ Exposes transcription and model-status; keeps on-device inference unchanged.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
-import subprocess
+import socket
 import tempfile
+import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections import OrderedDict
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Response
@@ -37,11 +43,48 @@ app.add_middleware(
 
 _MODELS_DIR = _ROOT / "models"
 _MAX_TTS_CHARS = 2000
+_TTS_CACHE_MAX = max(int(os.getenv("DEEPGRAM_TTS_CACHE_MAX", "50")), 0)
+_TTS_CACHE_TTL_SEC = max(int(os.getenv("DEEPGRAM_TTS_CACHE_TTL_SEC", "600")), 0)
+_TTS_TIMEOUT_SEC = max(float(os.getenv("DEEPGRAM_TTS_TIMEOUT_SEC", "15")), 1.0)
+_DEEPGRAM_ENDPOINT = "https://api.deepgram.com/v1/speak"
+_DEEPGRAM_DEFAULT_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en").strip() or "aura-2-thalia-en"
+_TTS_ENCODING = "mp3"
+_TTS_CACHE: "OrderedDict[str, tuple[float, bytes]]" = OrderedDict()
+_TTS_CACHE_LOCK = threading.Lock()
 
 
 class TTSRequest(BaseModel):
     text: str
 
+
+def _tts_cache_get(key: str) -> bytes | None:
+    if _TTS_CACHE_MAX <= 0:
+        return None
+    with _TTS_CACHE_LOCK:
+        item = _TTS_CACHE.get(key)
+        if item is None:
+            return None
+        created_at, value = item
+        if _TTS_CACHE_TTL_SEC > 0 and (time.time() - created_at) > _TTS_CACHE_TTL_SEC:
+            _TTS_CACHE.pop(key, None)
+            return None
+        _TTS_CACHE.move_to_end(key)
+        return value
+
+
+def _tts_cache_set(key: str, audio_bytes: bytes) -> None:
+    if _TTS_CACHE_MAX <= 0:
+        return
+    with _TTS_CACHE_LOCK:
+        _TTS_CACHE[key] = (time.time(), audio_bytes)
+        _TTS_CACHE.move_to_end(key)
+        if _TTS_CACHE_TTL_SEC > 0:
+            now = time.time()
+            expired = [k for k, (ts, _) in _TTS_CACHE.items() if (now - ts) > _TTS_CACHE_TTL_SEC]
+            for k in expired:
+                _TTS_CACHE.pop(k, None)
+        while len(_TTS_CACHE) > _TTS_CACHE_MAX:
+            _TTS_CACHE.popitem(last=False)
 
 def _model_files_present() -> bool:
     enc = _ROOT / "models" / "WhisperEncoder.onnx"
@@ -55,19 +98,83 @@ def model_status():
 
 
 def _tts_available() -> bool:
-    model_path_raw = os.getenv("PIPER_MODEL_PATH", "").strip()
-    if not model_path_raw:
-        return False
-    model_path = Path(model_path_raw)
-    if not model_path.is_file():
-        return False
-    config_path = model_path.with_suffix(model_path.suffix + ".json")
-    return config_path.is_file()
+    return bool(os.getenv("DEEPGRAM_API_KEY", "").strip())
+
+
+def _tts_model() -> str:
+    return os.getenv("DEEPGRAM_TTS_MODEL", "").strip() or _DEEPGRAM_DEFAULT_MODEL
+
+
+def _decode_error_payload(payload: bytes) -> str:
+    if not payload:
+        return ""
+    try:
+        text = payload.decode("utf-8", errors="ignore").strip()
+    except Exception:
+        return ""
+    if not text:
+        return ""
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return str(data.get("error") or data.get("message") or data)
+    except Exception:
+        pass
+    return text
+
+
+def _synthesize_with_deepgram(text: str, model: str, encoding: str) -> bytes:
+    # Deepgram TTS API:
+    # Endpoint: POST https://api.deepgram.com/v1/speak
+    # Auth header: Authorization: Token <DEEPGRAM_API_KEY>
+    # Content-Type: application/json
+    # Query string: model=aura-2-thalia-en (or configured model)
+    # Optional query: encoding=mp3 (default is mp3)
+    # JSON body: { "text": "Hello ..." }
+    # Response: binary audio stream (content-type audio/mpeg), often chunked.
+    key = os.getenv("DEEPGRAM_API_KEY", "").strip()
+    if not key:
+        raise HTTPException(503, "TTS unavailable: DEEPGRAM_API_KEY is not configured.")
+
+    query = urllib.parse.urlencode({"model": model, "encoding": encoding})
+    url = f"{_DEEPGRAM_ENDPOINT}?{query}"
+    payload = json.dumps({"text": text}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Token {key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=_TTS_TIMEOUT_SEC) as resp:
+            body = resp.read()
+            status = getattr(resp, "status", 200)
+            if status != 200:
+                err_text = _decode_error_payload(body)
+                raise HTTPException(status, err_text or "Deepgram TTS request failed.")
+            if not body:
+                raise HTTPException(502, "Deepgram TTS returned empty audio.")
+            return body
+    except urllib.error.HTTPError as e:
+        err_body = e.read()
+        err_text = _decode_error_payload(err_body)
+        raise HTTPException(e.code, err_text or "Deepgram TTS request failed.")
+    except socket.timeout:
+        raise HTTPException(504, "Deepgram TTS request timed out.")
+    except urllib.error.URLError as e:
+        reason = getattr(e, "reason", None) or "Network error."
+        raise HTTPException(502, f"Deepgram TTS request failed: {reason}")
 
 
 @app.get("/api/tts-status")
 def tts_status():
-    return {"available": _tts_available()}
+    available = _tts_available()
+    reason = None if available else "Missing DEEPGRAM_API_KEY."
+    return {"available": available, "model": _tts_model(), "reason": reason}
 
 
 @app.post("/api/tts")
@@ -77,59 +184,22 @@ def api_tts(payload: TTSRequest):
         raise HTTPException(400, "text is required")
     if len(text) > _MAX_TTS_CHARS:
         raise HTTPException(400, f"text is too long (max {_MAX_TTS_CHARS} chars)")
+    if not _tts_available():
+        raise HTTPException(503, "TTS unavailable: DEEPGRAM_API_KEY is not configured.")
 
-    piper_bin = os.getenv("PIPER_BIN", "piper")
-    model_path_raw = os.getenv("PIPER_MODEL_PATH", "").strip()
-    if not model_path_raw:
-        raise HTTPException(500, "Missing PIPER_MODEL_PATH. Set it to your Piper .onnx voice model file.")
+    model = _tts_model()
+    cache_key = hashlib.sha256(f"{model}|{_TTS_ENCODING}|{text}".encode("utf-8")).hexdigest()
+    cached_audio = _tts_cache_get(cache_key)
+    if cached_audio is not None:
+        return Response(content=cached_audio, media_type="audio/mpeg", headers={"X-TTS-Cache": "HIT"})
 
-    model_path = Path(model_path_raw)
-    if not model_path.is_file():
-        raise HTTPException(500, f"Piper model not found: {model_path}")
-
-    model_config_path = model_path.with_suffix(model_path.suffix + ".json")
-    if not model_config_path.is_file():
-        raise HTTPException(
-            500,
-            f"Missing Piper model config: {model_config_path}. Piper expects the matching .json next to the .onnx file.",
-        )
-
-    output_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tf:
-            output_path = Path(tf.name)
-
-        cmd = [piper_bin, "--model", str(model_path), "--output_file", str(output_path)]
-        proc = subprocess.run(
-            cmd,
-            input=text.encode("utf-8"),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-            timeout=90,
-        )
-        if proc.returncode != 0:
-            stderr = proc.stderr.decode("utf-8", errors="ignore").strip() or "Unknown Piper error."
-            raise HTTPException(500, f"Offline TTS failed. Check Piper installation/model. Details: {stderr}")
-
-        if not output_path.exists():
-            raise HTTPException(500, "Offline TTS failed: Piper did not create an output WAV file.")
-
-        wav_bytes = output_path.read_bytes()
-        if not wav_bytes:
-            raise HTTPException(500, "Offline TTS failed: Piper returned an empty WAV file.")
-
-        return Response(content=wav_bytes, media_type="audio/wav")
-    except FileNotFoundError:
-        raise HTTPException(500, f"Piper executable not found: '{piper_bin}'. Set PIPER_BIN or install Piper.")
-    except subprocess.TimeoutExpired:
-        raise HTTPException(500, "Offline TTS timed out while running Piper.")
-    finally:
-        if output_path and output_path.exists():
-            try:
-                output_path.unlink()
-            except Exception:
-                pass
+    audio_bytes = _synthesize_with_deepgram(text, model, _TTS_ENCODING)
+    _tts_cache_set(cache_key, audio_bytes)
+    return Response(
+        content=audio_bytes,
+        media_type="audio/mpeg",
+        headers={"X-TTS-Cache": "MISS", "X-TTS-Model": model},
+    )
 
 
 @app.post("/api/transcribe")

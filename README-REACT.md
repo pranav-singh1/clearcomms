@@ -39,65 +39,51 @@ All changes are on the **revised-frontend** branch.
 - Transcript, performance metrics, and export (transcript.txt, metadata.json)
 - Audio playback: original, prepared 16 kHz, and (if enabled) radio-filtered
 
-## Offline TTS with Piper
+## Online TTS with Deepgram
 
-The React demo includes a **"Speak cleaned transcript (offline)"** button when Piper is configured.
-The backend uses `PIPER_MODEL_PATH` and optionally `PIPER_BIN`.
+The React demo includes a **"Speak cleaned transcript"** button when Deepgram is configured.
+The backend calls Deepgram directly; no API key is exposed to the browser.
 
-### 1. Download voice model (Windows)
+### 1. Set environment and start backend
 
-From **project root** in PowerShell:
+In the **same** terminal where you start the backend (venv activated):
 
-```powershell
-.\setup_piper.ps1
-```
-
-This creates `assets\voices\` and downloads `en_US-lessac-medium.onnx` and `en_US-lessac-medium.onnx.json`.
-
-### 2. Set environment and start backend
-
-In the **same** PowerShell where you start the backend (venv activated):
-
-```powershell
-$env:PIPER_MODEL_PATH="C:\Users\hackathon user\Documents\qualhack\simple-whisper-transcription\assets\voices\en_US-lessac-medium.onnx"
-# Only if piper is not on PATH:
-# $env:PIPER_BIN="C:\path\to\piper.exe"
+```bash
+export DEEPGRAM_API_KEY="dg_..."
+export DEEPGRAM_TTS_MODEL="aura-2-thalia-en"
+export DEEPGRAM_TTS_CACHE_MAX="50"
+export DEEPGRAM_TTS_CACHE_TTL_SEC="600"
 
 uvicorn backend.main:app --reload --host 127.0.0.1 --port 8001
 ```
 
-Checks:
-- File exists: `...\assets\voices\en_US-lessac-medium.onnx`
-- Matching config in same folder: `...\en_US-lessac-medium.onnx.json`
-- `piper --help` works (or set `PIPER_BIN` to your `piper.exe`)
-- Restart backend after setting env vars
-
-### 3. Install Piper (if not on PATH)
-
-On Windows you need the Piper binary (e.g. from [Piper releases](https://github.com/rhasspy/piper/releases)) or the Python package:
+Windows PowerShell:
 
 ```powershell
-pip install piper-tts pathvalidate
-piper --help
+$env:DEEPGRAM_API_KEY="dg_..."
+$env:DEEPGRAM_TTS_MODEL="aura-2-thalia-en"
+$env:DEEPGRAM_TTS_CACHE_MAX="50"
+$env:DEEPGRAM_TTS_CACHE_TTL_SEC="600"
+
+uvicorn backend.main:app --reload --host 127.0.0.1 --port 8001
 ```
 
-If TTS fails with `ModuleNotFoundError: No module named 'pathvalidate'`, run `pip install pathvalidate`.
+Notes:
+- Deepgram TTS requires internet access. The rest of the pipeline can remain offline.
+- If `DEEPGRAM_API_KEY` is missing, the UI disables the TTS button and shows a tooltip.
 
-If you use a downloaded `piper.exe`, set `$env:PIPER_BIN` to its full path.
-
-### 4. Quick test
+### 2. Quick test
 
 With backend running:
 
-```powershell
-Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8001/api/tts" -ContentType "application/json" -Body '{"text":"hello"}' -OutFile tts.wav
-# Then play tts.wav
+```bash
+curl -X POST http://127.0.0.1:8001/api/tts -H "Content-Type: application/json" -d "{\"text\":\"hello\"}" --output tts.mp3
 ```
 
-Or with curl (if installed):
+PowerShell:
 
-```bash
-curl -X POST http://127.0.0.1:8001/api/tts -H "Content-Type: application/json" -d "{\"text\":\"hello\"}" --output tts.wav
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8001/api/tts" -ContentType "application/json" -Body '{"text":"hello"}' -OutFile tts.mp3
 ```
 
 ## Design

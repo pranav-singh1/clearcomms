@@ -1,6 +1,7 @@
 const API_BASE = "";
 
 export type ModelStatus = { models_found: boolean };
+export type TtsStatus = { available: boolean; model: string; reason?: string | null };
 
 export type TranscribeResult = {
   success: boolean;
@@ -21,7 +22,13 @@ export async function modelStatus(): Promise<ModelStatus> {
   return res.json();
 }
 
-export async function synthesizeOfflineTTS(text: string): Promise<Blob> {
+export async function ttsStatus(): Promise<TtsStatus> {
+  const res = await fetch(`${API_BASE}/api/tts-status`);
+  if (!res.ok) throw new Error("Failed to fetch TTS status");
+  return res.json();
+}
+
+export async function synthesizeTTS(text: string): Promise<Blob> {
   const res = await fetch(`${API_BASE}/api/tts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

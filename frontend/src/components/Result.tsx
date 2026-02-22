@@ -1,16 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
-import { synthesizeOfflineTTS, type TranscribeResult } from "../api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { synthesizeTTS, type TranscribeResult, type TtsStatus } from "../api";
 
 type Props = {
   result: TranscribeResult;
   originalFile: File | null;
   applyRadioFilter: boolean;
+  ttsEnabled: boolean;
+  ttsStatus: TtsStatus | null;
 };
 
-export function Result({ result, originalFile, applyRadioFilter }: Props) {
+export function Result({ result, originalFile, applyRadioFilter, ttsEnabled, ttsStatus }: Props) {
   const [ttsLoading, setTtsLoading] = useState(false);
   const [ttsError, setTtsError] = useState<string | null>(null);
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
+  const ttsCacheRef = useRef<Map<string, string>>(new Map());
 
   const originalUrl = useMemo(() => (originalFile ? URL.createObjectURL(originalFile) : null), [originalFile]);
   const preparedUrl = useMemo(
@@ -24,10 +27,13 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
 
   const transcriptIsError = Boolean(result.error);
   const cleanedTranscript = (result.cleaned_transcript || result.text || "").trim();
-  const canSpeakCleaned = !transcriptIsError && cleanedTranscript.length > 0;
+  const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+  const ttsAvailable = Boolean(ttsStatus?.available);
+  const canSpeakCleaned =
+    !transcriptIsError && cleanedTranscript.length > 0 && ttsAvailable && ttsEnabled && !ttsLoading;
   const transcriptContent = result.error
     ? `ERR: ${result.error}`
-    : (result.text || "NO TRANSCRIPT_");
+    : (cleanedTranscript || result.text || "NO TRANSCRIPT_");
 
   // Simulated structured data based on the prompt "Cleaned transcript, Structured JSON output"
   const structuredData = useMemo(() => {
@@ -43,36 +49,44 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
 
   useEffect(() => {
     return () => {
-      if (ttsAudioUrl) URL.revokeObjectURL(ttsAudioUrl);
+      for (const url of ttsCacheRef.current.values()) {
+        URL.revokeObjectURL(url);
+      }
+      ttsCacheRef.current.clear();
     };
-  }, [ttsAudioUrl]);
+  }, []);
 
   useEffect(() => {
     setTtsError(null);
     setTtsLoading(false);
-    if (ttsAudioUrl) {
-      URL.revokeObjectURL(ttsAudioUrl);
-      setTtsAudioUrl(null);
-    }
+    setTtsAudioUrl(null);
   }, [result]);
 
   const handleSpeakCleanedTranscript = async () => {
     if (!canSpeakCleaned) return;
+    const cached = ttsCacheRef.current.get(cleanedTranscript);
+    if (cached) {
+      setTtsAudioUrl(cached);
+      return;
+    }
     setTtsLoading(true);
     setTtsError(null);
     try {
-      const audioBlob = await synthesizeOfflineTTS(cleanedTranscript);
+      const audioBlob = await synthesizeTTS(cleanedTranscript);
       const url = URL.createObjectURL(audioBlob);
-      setTtsAudioUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return url;
-      });
+      ttsCacheRef.current.set(cleanedTranscript, url);
+      if (ttsCacheRef.current.size > 20) {
+        const oldestKey = ttsCacheRef.current.keys().next().value as string | undefined;
+        if (oldestKey) {
+          const oldestUrl = ttsCacheRef.current.get(oldestKey);
+          if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+          ttsCacheRef.current.delete(oldestKey);
+        }
+      }
+      setTtsAudioUrl(url);
     } catch (e: unknown) {
-      setTtsError(e instanceof Error ? e.message : "Offline TTS failed.");
-      setTtsAudioUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
+      setTtsError(e instanceof Error ? e.message : "TTS failed.");
+      setTtsAudioUrl(null);
     } finally {
       setTtsLoading(false);
     }
@@ -108,7 +122,7 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
       {/* Transcripts & Data */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
         <div className="flex flex-col">
-          <div className="border-b border-defense-border pb-2 mb-4 font-mono text-xs text-white uppercase">Raw Output</div>
+          <div className="border-b border-defense-border pb-2 mb-4 font-mono text-xs text-white uppercase">Cleaned Transcript</div>
           <div className={`font-mono text-sm leading-relaxed p-4 bg-defense-900 border ${transcriptIsError ? 'border-red-900/50 text-red-400' : 'border-defense-border text-white'}`}>
             {transcriptContent}
           </div>
@@ -116,11 +130,27 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
             <button
               type="button"
               onClick={handleSpeakCleanedTranscript}
-              disabled={!canSpeakCleaned || ttsLoading}
+              disabled={!canSpeakCleaned}
+              title={
+                !ttsEnabled
+                  ? "TTS is disabled in settings."
+                  : !ttsAvailable
+                  ? (isOffline ? "TTS unavailable offline." : ttsStatus?.reason || "TTS unavailable.")
+                  : cleanedTranscript.length === 0
+                  ? "No cleaned transcript to speak."
+                  : undefined
+              }
               className="px-4 py-2 border border-defense-border bg-defense-800 text-xs font-mono text-white hover:bg-defense-700 transition disabled:opacity-50 disabled:cursor-not-allowed text-left"
             >
-              {ttsLoading ? "GENERATING OFFLINE TTS..." : "SPEAK CLEANED TRANSCRIPT (OFFLINE)"}
+              {ttsLoading ? "GENERATING SPEECH..." : "SPEAK CLEANED TRANSCRIPT"}
             </button>
+            <div className="text-xs font-mono text-defense-muted">
+              {ttsAvailable
+                ? `Model: ${ttsStatus?.model || "aura-2-thalia-en"}`
+                : isOffline
+                ? "TTS unavailable offline."
+                : ttsStatus?.reason || "TTS unavailable."}
+            </div>
             {ttsError && (
               <div className="p-3 bg-red-950/30 border border-red-900/50 text-red-400 text-xs font-mono">
                 TTS ERR: {ttsError}
