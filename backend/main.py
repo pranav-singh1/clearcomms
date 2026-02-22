@@ -60,6 +60,10 @@ class TTSRequest(BaseModel):
     text: str
 
 
+class ReviseRequest(BaseModel):
+    transcript: str
+
+
 def _tts_cache_get(key: str) -> bytes | None:
     if _TTS_CACHE_MAX <= 0:
         return None
@@ -365,6 +369,7 @@ async def api_transcribe(
             audio_filtered_b64 = base64.b64encode(filt_path.read_bytes()).decode("utf-8")
 
         duration_sec = round(len(audio) / max(sr, 1), 2)
+        llama_revision_available = os.getenv("ENABLE_LLAMA_REVISION", "").strip() == "1"
         payload = {
             "success": True,
             "error": None,
@@ -372,6 +377,7 @@ async def api_transcribe(
             "cleaned_transcript": "",
             "raw_transcript": None,
             "revised_transcript": None,
+            "llama_revision_available": llama_revision_available,
             "meta": {},
             "audio_prepared_b64": audio_prepared_b64,
             "audio_filtered_b64": audio_filtered_b64,
@@ -389,24 +395,8 @@ async def api_transcribe(
             payload["text"] = raw_text
             payload["cleaned_transcript"] = raw_text
             payload["meta"] = {**meta, "ui_total_ms": round(ui_total_ms, 1)}
-
-            llama_revision_env = os.getenv("ENABLE_LLAMA_REVISION", "").strip()
-            print(f"[Llama] ENABLE_LLAMA_REVISION={llama_revision_env!r}", flush=True)
-            if llama_revision_env == "1":
-                if raw_text and raw_text != "(no transcript)":
-                    print("[Llama] Revision enabled, calling Genie...", flush=True)
-                    try:
-                        from llama_on_device import revise_transcript
-                        revised = revise_transcript(raw_text)
-                        payload["revised_transcript"] = revised
-                        payload["text"] = revised
-                        payload["cleaned_transcript"] = revised
-                        print("[Llama] Revision succeeded.", flush=True)
-                    except Exception as e:
-                        payload["meta"]["llama_revision_error"] = str(e)
-                        print(f"[Llama] Revision failed: {e}", flush=True)
-                else:
-                    print("[Llama] Revision enabled but skipped (no transcript to revise).", flush=True)
+            if llama_revision_available:
+                print("[Llama] Revision available; frontend will request via /api/revise.", flush=True)
         except FileNotFoundError as e:
             payload["success"] = False
             payload["error"] = "ONNX encoder/decoder not found. Place WhisperEncoder.onnx and WhisperDecoder.onnx in models/."
@@ -422,3 +412,21 @@ async def api_transcribe(
             os.remove(str(input_path))
         except Exception:
             pass
+
+
+@app.post("/api/revise")
+def api_revise(payload: ReviseRequest):
+    """Run Llama revision on a transcript. Called by frontend after transcribe returns."""
+    transcript = (payload.transcript or "").strip()
+    if not transcript:
+        raise HTTPException(400, "transcript is required")
+    if os.getenv("ENABLE_LLAMA_REVISION", "").strip() != "1":
+        raise HTTPException(503, "Llama revision is not enabled (ENABLE_LLAMA_REVISION=1).")
+    try:
+        from llama_on_device import revise_transcript
+        revised = revise_transcript(transcript)
+        return {"revised_transcript": revised}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))

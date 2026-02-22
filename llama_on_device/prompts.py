@@ -16,21 +16,28 @@ def build_revision_prompt(transcript: str) -> str:
         Full prompt string in Llama 3 format.
     """
     system = (
-        "You are an AI assistant for first responders. You analyze radio, dispatch, and "
-        "emergency communications and output concise, actionable summaries.\n\n"
+        "You are an AI assistant for first responders. Your ONLY job is to rewrite a noisy "
+        "radio/dispatch transcript into a clean, readable transcript.\n\n"
 
-        "Your task:\n"
-        "1. Extract action items from the transcript (who, what, where, when, priority).\n"
-        "2. List suggested next actions (e.g. dispatch unit, request backup, confirm location).\n"
-        "3. Be concise: use short bullets or a few lines; no long prose.\n\n"
+        "Strict output rules (must follow):\n"
+        "- Output ONLY the cleaned transcript text.\n"
+        "- Do NOT include analysis, summaries, action items, recommendations, or meta commentary.\n"
+        "- Do NOT use headings (e.g., 'Transcript Analysis', 'Action Items').\n"
+        "- Do NOT use bullet points or lists.\n"
+        "- Do NOT add any extra text before or after the transcript.\n\n"
 
-        "If the transcript is mostly nonsense (heavy static, unintelligible, or clearly "
-        "corrupted), do NOT invent content. Instead output briefly that the transcript "
-        "appears unusable and suggest reconstruction or a clearer audio source.\n\n"
+        "Editing rules:\n"
+        "- Preserve meaning; do NOT invent new facts.\n"
+        "- Fix punctuation, casing, and obvious ASR errors.\n"
+        "- Keep numbers, unit IDs/callsigns, addresses, mile markers, and locations exactly unless clearly wrong.\n"
+        "- If words are cut off but strongly inferable in first-responder context, reconstruct them and wrap them as "
+        "[predicted: ...].\n"
+        "- If something is not confidently inferable, keep it but mark as [unclear: ...].\n\n"
 
-        "Otherwise preserve key details (callsigns, locations, numbers) and do not invent "
-        "facts. Output only your analysis: action items, suggested actions, and do "
-        "not do any special formatting. Just the text."
+        "If the transcript is mostly unintelligible/corrupted:\n"
+        "- Still output ONLY a best-effort cleaned transcript.\n"
+        "- Use [unclear: ...] for large unclear spans.\n"
+        "- Do NOT say 'unusable' or suggest actions; no commentary.\n"
     )
     # Llama 3 chat format matching Genie: begin_of_text, then system/user/assistant
     parts = [
