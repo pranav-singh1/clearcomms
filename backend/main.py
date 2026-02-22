@@ -5,13 +5,22 @@ Exposes transcription and model-status; keeps on-device inference unchanged.
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import os
+import socket
 import tempfile
+import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections import OrderedDict
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 # Add project root for pipeline imports
 _ROOT = Path(__file__).resolve().parent.parent
@@ -33,7 +42,49 @@ app.add_middleware(
 )
 
 _MODELS_DIR = _ROOT / "models"
+_MAX_TTS_CHARS = 2000
+_TTS_CACHE_MAX = max(int(os.getenv("DEEPGRAM_TTS_CACHE_MAX", "50")), 0)
+_TTS_CACHE_TTL_SEC = max(int(os.getenv("DEEPGRAM_TTS_CACHE_TTL_SEC", "600")), 0)
+_TTS_TIMEOUT_SEC = max(float(os.getenv("DEEPGRAM_TTS_TIMEOUT_SEC", "15")), 1.0)
+_DEEPGRAM_ENDPOINT = "https://api.deepgram.com/v1/speak"
+_DEEPGRAM_DEFAULT_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en").strip() or "aura-2-thalia-en"
+_TTS_ENCODING = "mp3"
+_TTS_CACHE: "OrderedDict[str, tuple[float, bytes]]" = OrderedDict()
+_TTS_CACHE_LOCK = threading.Lock()
 
+
+class TTSRequest(BaseModel):
+    text: str
+
+
+def _tts_cache_get(key: str) -> bytes | None:
+    if _TTS_CACHE_MAX <= 0:
+        return None
+    with _TTS_CACHE_LOCK:
+        item = _TTS_CACHE.get(key)
+        if item is None:
+            return None
+        created_at, value = item
+        if _TTS_CACHE_TTL_SEC > 0 and (time.time() - created_at) > _TTS_CACHE_TTL_SEC:
+            _TTS_CACHE.pop(key, None)
+            return None
+        _TTS_CACHE.move_to_end(key)
+        return value
+
+
+def _tts_cache_set(key: str, audio_bytes: bytes) -> None:
+    if _TTS_CACHE_MAX <= 0:
+        return
+    with _TTS_CACHE_LOCK:
+        _TTS_CACHE[key] = (time.time(), audio_bytes)
+        _TTS_CACHE.move_to_end(key)
+        if _TTS_CACHE_TTL_SEC > 0:
+            now = time.time()
+            expired = [k for k, (ts, _) in _TTS_CACHE.items() if (now - ts) > _TTS_CACHE_TTL_SEC]
+            for k in expired:
+                _TTS_CACHE.pop(k, None)
+        while len(_TTS_CACHE) > _TTS_CACHE_MAX:
+            _TTS_CACHE.popitem(last=False)
 
 def _model_files_present() -> bool:
     enc = _ROOT / "models" / "WhisperEncoder.onnx"
@@ -44,6 +95,111 @@ def _model_files_present() -> bool:
 @app.get("/api/model-status")
 def model_status():
     return {"models_found": _model_files_present()}
+
+
+def _tts_available() -> bool:
+    return bool(os.getenv("DEEPGRAM_API_KEY", "").strip())
+
+
+def _tts_model() -> str:
+    return os.getenv("DEEPGRAM_TTS_MODEL", "").strip() or _DEEPGRAM_DEFAULT_MODEL
+
+
+def _decode_error_payload(payload: bytes) -> str:
+    if not payload:
+        return ""
+    try:
+        text = payload.decode("utf-8", errors="ignore").strip()
+    except Exception:
+        return ""
+    if not text:
+        return ""
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return str(data.get("error") or data.get("message") or data)
+    except Exception:
+        pass
+    return text
+
+
+def _synthesize_with_deepgram(text: str, model: str, encoding: str) -> bytes:
+    # Deepgram TTS API:
+    # Endpoint: POST https://api.deepgram.com/v1/speak
+    # Auth header: Authorization: Token <DEEPGRAM_API_KEY>
+    # Content-Type: application/json
+    # Query string: model=aura-2-thalia-en (or configured model)
+    # Optional query: encoding=mp3 (default is mp3)
+    # JSON body: { "text": "Hello ..." }
+    # Response: binary audio stream (content-type audio/mpeg), often chunked.
+    key = os.getenv("DEEPGRAM_API_KEY", "").strip()
+    if not key:
+        raise HTTPException(503, "TTS unavailable: DEEPGRAM_API_KEY is not configured.")
+
+    query = urllib.parse.urlencode({"model": model, "encoding": encoding})
+    url = f"{_DEEPGRAM_ENDPOINT}?{query}"
+    payload = json.dumps({"text": text}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Token {key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=_TTS_TIMEOUT_SEC) as resp:
+            body = resp.read()
+            status = getattr(resp, "status", 200)
+            if status != 200:
+                err_text = _decode_error_payload(body)
+                raise HTTPException(status, err_text or "Deepgram TTS request failed.")
+            if not body:
+                raise HTTPException(502, "Deepgram TTS returned empty audio.")
+            return body
+    except urllib.error.HTTPError as e:
+        err_body = e.read()
+        err_text = _decode_error_payload(err_body)
+        raise HTTPException(e.code, err_text or "Deepgram TTS request failed.")
+    except socket.timeout:
+        raise HTTPException(504, "Deepgram TTS request timed out.")
+    except urllib.error.URLError as e:
+        reason = getattr(e, "reason", None) or "Network error."
+        raise HTTPException(502, f"Deepgram TTS request failed: {reason}")
+
+
+@app.get("/api/tts-status")
+def tts_status():
+    available = _tts_available()
+    reason = None if available else "Missing DEEPGRAM_API_KEY."
+    return {"available": available, "model": _tts_model(), "reason": reason}
+
+
+@app.post("/api/tts")
+def api_tts(payload: TTSRequest):
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(400, "text is required")
+    if len(text) > _MAX_TTS_CHARS:
+        raise HTTPException(400, f"text is too long (max {_MAX_TTS_CHARS} chars)")
+    if not _tts_available():
+        raise HTTPException(503, "TTS unavailable: DEEPGRAM_API_KEY is not configured.")
+
+    model = _tts_model()
+    cache_key = hashlib.sha256(f"{model}|{_TTS_ENCODING}|{text}".encode("utf-8")).hexdigest()
+    cached_audio = _tts_cache_get(cache_key)
+    if cached_audio is not None:
+        return Response(content=cached_audio, media_type="audio/mpeg", headers={"X-TTS-Cache": "HIT"})
+
+    audio_bytes = _synthesize_with_deepgram(text, model, _TTS_ENCODING)
+    _tts_cache_set(cache_key, audio_bytes)
+    return Response(
+        content=audio_bytes,
+        media_type="audio/mpeg",
+        headers={"X-TTS-Cache": "MISS", "X-TTS-Model": model},
+    )
 
 
 @app.post("/api/transcribe")
@@ -87,8 +243,11 @@ async def api_transcribe(
         else:
             asr_input = pre16_path
 
-        # Keep preprocessed clip internal; return only user-facing streams.
+        # Always encode preprocessed clips for playback (even if transcribe fails)
+        audio_prepared_b64 = None
         audio_filtered_b64 = None
+        if pre16_path.exists():
+            audio_prepared_b64 = base64.b64encode(pre16_path.read_bytes()).decode("utf-8")
         if apply_radio and filt_path.exists():
             audio_filtered_b64 = base64.b64encode(filt_path.read_bytes()).decode("utf-8")
 
@@ -97,7 +256,9 @@ async def api_transcribe(
             "success": True,
             "error": None,
             "text": "",
+            "cleaned_transcript": "",
             "meta": {},
+            "audio_prepared_b64": audio_prepared_b64,
             "audio_filtered_b64": audio_filtered_b64,
             "apply_radio_filter": apply_radio,
             "duration_sec": duration_sec,
@@ -109,6 +270,7 @@ async def api_transcribe(
             text, meta = transcribe(str(asr_input), WHISPER_SR)
             ui_total_ms = (time.time() - t0) * 1000.0
             payload["text"] = (text or "").strip() or "(no transcript)"
+            payload["cleaned_transcript"] = payload["text"]
             payload["meta"] = {**meta, "ui_total_ms": round(ui_total_ms, 1)}
         except FileNotFoundError as e:
             payload["success"] = False

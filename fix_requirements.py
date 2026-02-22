@@ -1,4 +1,5 @@
-ÿþaiohappyeyeballs==2.6.1
+# Writes requirements.txt as UTF-8 (no BOM) so pip can read it on Windows
+LINES = """aiohappyeyeballs==2.6.1
 aiohttp==3.11.14
 aiosignal==1.3.2
 asttokens==3.0.0
@@ -95,3 +96,13 @@ urllib3==2.3.0
 wcwidth==0.2.13
 xxhash==3.5.0
 yarl==1.18.3
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+""".strip()
+
+if __name__ == "__main__":
+    path = __file__.replace("fix_requirements.py", "requirements.txt")
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(LINES)
+    print("Wrote requirements.txt as UTF-8. Run: pip install -r requirements.txt")

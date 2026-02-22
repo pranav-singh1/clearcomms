@@ -17,6 +17,7 @@ env/
 
 # Model weights (large files)
 /models/
+/assets/voices/
 *.onnx
 
 # Build / dist

@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { uploadAndTranscribe, type TranscribeResult } from "../api";
+import { useState, useCallback, useEffect } from "react";
+import { uploadAndTranscribe, ttsStatus, type TranscribeResult, type TtsStatus } from "../api";
 import { Controls } from "./Controls";
 import { UploadZone } from "./UploadZone";
 import { Result } from "./Result";
@@ -11,6 +11,20 @@ export function Demo() {
   const [result, setResult] = useState<TranscribeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [ttsState, setTtsState] = useState<TtsStatus | null>(null);
+
+  useEffect(() => {
+    ttsStatus()
+      .then((status) => {
+        setTtsState(status);
+        if (!status.available) setTtsEnabled(false);
+      })
+      .catch(() => {
+        setTtsState({ available: false, model: "aura-2-thalia-en", reason: "Unavailable" });
+        setTtsEnabled(false);
+      });
+  }, []);
 
   const handleFileChange = useCallback((f: File | null) => {
     setFile(f);
@@ -49,6 +63,9 @@ export function Demo() {
               setApplyRadioFilter={setApplyRadioFilter}
               normalize={normalize}
               setNormalize={setNormalize}
+              ttsEnabled={ttsEnabled}
+              setTtsEnabled={setTtsEnabled}
+              ttsStatus={ttsState}
             />
           </div>
           
@@ -84,7 +101,9 @@ export function Demo() {
                 <Result 
                   result={result} 
                   originalFile={file} 
-                  applyRadioFilter={applyRadioFilter} 
+                  applyRadioFilter={applyRadioFilter}
+                  ttsEnabled={ttsEnabled}
+                  ttsStatus={ttsState}
                 />
               )
             )}
