@@ -7,12 +7,14 @@ from __future__ import annotations
 import base64
 import json
 import os
+import subprocess
 import tempfile
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 # Add project root for pipeline imports
 _ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +36,11 @@ app.add_middleware(
 )
 
 _MODELS_DIR = _ROOT / "models"
+_MAX_TTS_CHARS = 2000
+
+
+class TTSRequest(BaseModel):
+    text: str
 
 
 def _model_files_present() -> bool:
@@ -45,6 +52,68 @@ def _model_files_present() -> bool:
 @app.get("/api/model-status")
 def model_status():
     return {"models_found": _model_files_present()}
+
+
+@app.post("/api/tts")
+def api_tts(payload: TTSRequest):
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(400, "text is required")
+    if len(text) > _MAX_TTS_CHARS:
+        raise HTTPException(400, f"text is too long (max {_MAX_TTS_CHARS} chars)")
+
+    piper_bin = os.getenv("PIPER_BIN", "piper")
+    model_path_raw = os.getenv("PIPER_MODEL_PATH", "").strip()
+    if not model_path_raw:
+        raise HTTPException(500, "Missing PIPER_MODEL_PATH. Set it to your Piper .onnx voice model file.")
+
+    model_path = Path(model_path_raw)
+    if not model_path.is_file():
+        raise HTTPException(500, f"Piper model not found: {model_path}")
+
+    model_config_path = model_path.with_suffix(model_path.suffix + ".json")
+    if not model_config_path.is_file():
+        raise HTTPException(
+            500,
+            f"Missing Piper model config: {model_config_path}. Piper expects the matching .json next to the .onnx file.",
+        )
+
+    output_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tf:
+            output_path = Path(tf.name)
+
+        cmd = [piper_bin, "--model", str(model_path), "--output_file", str(output_path)]
+        proc = subprocess.run(
+            cmd,
+            input=text.encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=90,
+        )
+        if proc.returncode != 0:
+            stderr = proc.stderr.decode("utf-8", errors="ignore").strip() or "Unknown Piper error."
+            raise HTTPException(500, f"Offline TTS failed. Check Piper installation/model. Details: {stderr}")
+
+        if not output_path.exists():
+            raise HTTPException(500, "Offline TTS failed: Piper did not create an output WAV file.")
+
+        wav_bytes = output_path.read_bytes()
+        if not wav_bytes:
+            raise HTTPException(500, "Offline TTS failed: Piper returned an empty WAV file.")
+
+        return Response(content=wav_bytes, media_type="audio/wav")
+    except FileNotFoundError:
+        raise HTTPException(500, f"Piper executable not found: '{piper_bin}'. Set PIPER_BIN or install Piper.")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(500, "Offline TTS timed out while running Piper.")
+    finally:
+        if output_path and output_path.exists():
+            try:
+                output_path.unlink()
+            except Exception:
+                pass
 
 
 @app.post("/api/transcribe")
@@ -101,6 +170,7 @@ async def api_transcribe(
             "success": True,
             "error": None,
             "text": "",
+            "cleaned_transcript": "",
             "meta": {},
             "audio_prepared_b64": audio_prepared_b64,
             "audio_filtered_b64": audio_filtered_b64,
@@ -114,6 +184,7 @@ async def api_transcribe(
             text, meta = transcribe(str(asr_input), WHISPER_SR)
             ui_total_ms = (time.time() - t0) * 1000.0
             payload["text"] = (text or "").strip() or "(no transcript)"
+            payload["cleaned_transcript"] = payload["text"]
             payload["meta"] = {**meta, "ui_total_ms": round(ui_total_ms, 1)}
         except FileNotFoundError as e:
             payload["success"] = False

@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import type { TranscribeResult } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { synthesizeOfflineTTS, type TranscribeResult } from "../api";
 
 type Props = {
   result: TranscribeResult;
@@ -8,6 +8,10 @@ type Props = {
 };
 
 export function Result({ result, originalFile, applyRadioFilter }: Props) {
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [ttsError, setTtsError] = useState<string | null>(null);
+  const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
+
   const originalUrl = useMemo(() => (originalFile ? URL.createObjectURL(originalFile) : null), [originalFile]);
   const preparedUrl = useMemo(
     () => (result.audio_prepared_b64 ? `data:audio/wav;base64,${result.audio_prepared_b64}` : null),
@@ -19,6 +23,8 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
   );
 
   const transcriptIsError = Boolean(result.error);
+  const cleanedTranscript = (result.cleaned_transcript || result.text || "").trim();
+  const canSpeakCleaned = !transcriptIsError && cleanedTranscript.length > 0;
   const transcriptContent = result.error
     ? `ERR: ${result.error}`
     : (result.text || "NO TRANSCRIPT_");
@@ -34,6 +40,43 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
       "timestamp": new Date().toISOString()
     };
   }, [result]);
+
+  useEffect(() => {
+    return () => {
+      if (ttsAudioUrl) URL.revokeObjectURL(ttsAudioUrl);
+    };
+  }, [ttsAudioUrl]);
+
+  useEffect(() => {
+    setTtsError(null);
+    setTtsLoading(false);
+    if (ttsAudioUrl) {
+      URL.revokeObjectURL(ttsAudioUrl);
+      setTtsAudioUrl(null);
+    }
+  }, [result]);
+
+  const handleSpeakCleanedTranscript = async () => {
+    if (!canSpeakCleaned) return;
+    setTtsLoading(true);
+    setTtsError(null);
+    try {
+      const audioBlob = await synthesizeOfflineTTS(cleanedTranscript);
+      const url = URL.createObjectURL(audioBlob);
+      setTtsAudioUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return url;
+      });
+    } catch (e: unknown) {
+      setTtsError(e instanceof Error ? e.message : "Offline TTS failed.");
+      setTtsAudioUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+    } finally {
+      setTtsLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-8">
@@ -68,6 +111,24 @@ export function Result({ result, originalFile, applyRadioFilter }: Props) {
           <div className="border-b border-defense-border pb-2 mb-4 font-mono text-xs text-white uppercase">Raw Output</div>
           <div className={`font-mono text-sm leading-relaxed p-4 bg-defense-900 border ${transcriptIsError ? 'border-red-900/50 text-red-400' : 'border-defense-border text-white'}`}>
             {transcriptContent}
+          </div>
+          <div className="mt-4 flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={handleSpeakCleanedTranscript}
+              disabled={!canSpeakCleaned || ttsLoading}
+              className="px-4 py-2 border border-defense-border bg-defense-800 text-xs font-mono text-white hover:bg-defense-700 transition disabled:opacity-50 disabled:cursor-not-allowed text-left"
+            >
+              {ttsLoading ? "GENERATING OFFLINE TTS..." : "SPEAK CLEANED TRANSCRIPT (OFFLINE)"}
+            </button>
+            {ttsError && (
+              <div className="p-3 bg-red-950/30 border border-red-900/50 text-red-400 text-xs font-mono">
+                TTS ERR: {ttsError}
+              </div>
+            )}
+            {ttsAudioUrl && (
+              <audio controls autoPlay src={ttsAudioUrl} className="w-full h-8" />
+            )}
           </div>
         </div>
 

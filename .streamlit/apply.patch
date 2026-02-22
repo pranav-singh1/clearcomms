@@ -1,0 +1,517 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/README.md b/README.md
+index 2aa53169bc530280ee97834fb1732ccad9974b7a..d235568b001bbb4bd9a8f6861002d810c7c46be3 100644
+--- a/README.md
++++ b/README.md
+@@ -1 +1,26 @@
+-# clearcomms
+\ No newline at end of file
++# clearcomms
++
++React + FastAPI rewrite of CLEARCOMMS.
++
++## Architecture
++- `app/frontend`: React (Vite) UI
++- `app/backend`: FastAPI API for audio upload + pipeline execution
++- `pipeline`: on-device audio enhancement, ASR, incident synthesis, and TTS
++
++## Run
++
++### Backend
++```bash
++cd app/backend
++pip install -r requirements.txt
++uvicorn main:app --reload --port 8000
++```
++
++### Frontend
++```bash
++cd app/frontend
++npm install
++npm run dev
++```
++
++Open `http://localhost:5173`.
+diff --git a/app/app.py b/app/app.py
+deleted file mode 100644
+index 2c072f78af8beb88765334bfbc17bf5b9139a763..0000000000000000000000000000000000000000
+--- a/app/app.py
++++ /dev/null
+@@ -1,47 +0,0 @@
+-import streamlit as st
+-import numpy as np
+-import soundfile as sf
+-from pathlib import Path
+-from pipeline.enhance import enhance_audio
+-from pipeline.asr import transcribe
+-
+-st.set_page_config(page_title="CLEARCOMMS", layout="wide")
+-st.title("CLEARCOMMS — Offline Radio Speech Recovery")
+-
+-uploaded = st.file_uploader("Upload WAV/FLAC/MP3 (WAV safest)", type=["wav", "flac", "mp3"])
+-
+-if uploaded:
+-    Path("runs").mkdir(exist_ok=True)
+-    in_path = Path("runs/input.wav")
+-    out_path = Path("runs/enhanced.wav")
+-
+-    # Streamlit gives bytes; write to disk
+-    in_path.write_bytes(uploaded.read())
+-
+-    # Read audio
+-    audio, sr = sf.read(str(in_path), always_2d=False)
+-    if audio.ndim > 1:
+-        audio = audio.mean(axis=1)
+-
+-    st.subheader("Input Audio")
+-    st.audio(in_path.read_bytes())
+-
+-    st.subheader("Enhancing…")
+-    enhanced = enhance_audio(audio, sr)
+-    sf.write(str(out_path), enhanced, sr)
+-
+-    st.subheader("Enhanced Audio")
+-    st.audio(out_path.read_bytes())
+-
+-    st.subheader("Transcribing…")
+-    raw_text, meta = transcribe(out_path, sr)
+-
+-    col1, col2 = st.columns(2)
+-    with col1:
+-        st.markdown("### Transcript")
+-        st.write(raw_text)
+-    with col2:
+-        st.markdown("### Timing / Performance")
+-        st.json(meta)
+-
+-    st.download_button("Download incident JSON", data=meta.get("incident_json","{}"), file_name="incident.json")
+diff --git a/app/backend/main.py b/app/backend/main.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..a3c887b3a24bc4f0901ce1b8cd282e70a86e50ba
+--- /dev/null
++++ b/app/backend/main.py
+@@ -0,0 +1,57 @@
++from __future__ import annotations
++
++import json
++import tempfile
++from pathlib import Path
++import sys
++
++import soundfile as sf
++
++ROOT = Path(__file__).resolve().parents[2]
++if str(ROOT) not in sys.path:
++    sys.path.insert(0, str(ROOT))
++
++from fastapi import FastAPI, File, UploadFile
++from fastapi.middleware.cors import CORSMiddleware
++
++from pipeline.orchestrator import run_pipeline
++
++app = FastAPI(title="CLEARCOMMS API", version="2.0")
++
++app.add_middleware(
++    CORSMiddleware,
++    allow_origins=["*"],
++    allow_credentials=True,
++    allow_methods=["*"],
++    allow_headers=["*"],
++)
++
++
++@app.get("/api/health")
++def health() -> dict[str, str]:
++    return {"status": "ok"}
++
++
++@app.post("/api/process")
++async def process_audio(file: UploadFile = File(...)) -> dict:
++    suffix = Path(file.filename or "upload.wav").suffix or ".wav"
++    with tempfile.TemporaryDirectory() as td:
++        in_path = Path(td) / f"input{suffix}"
++        enhanced_path = Path(td) / "enhanced.wav"
++        tts_path = Path(td) / "response.wav"
++
++        in_path.write_bytes(await file.read())
++        audio, sr = sf.read(str(in_path), always_2d=False)
++
++        if audio.ndim > 1:
++            audio = audio.mean(axis=1)
++
++        result = run_pipeline(audio=audio, sr=sr, enhanced_path=enhanced_path, tts_path=tts_path)
++
++        return {
++            "transcript": result.transcript,
++            "incident": result.incident,
++            "tts_text": result.tts_text,
++            "meta": result.meta,
++            "incident_json": json.dumps(result.incident, indent=2),
++        }
+diff --git a/app/backend/requirements.txt b/app/backend/requirements.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..092595dc449a729e321c09a867da76dca52b7a73
+--- /dev/null
++++ b/app/backend/requirements.txt
+@@ -0,0 +1,9 @@
++fastapi
++uvicorn
++python-multipart
++numpy
++scipy
++soundfile
++pyttsx3
++# optional for real ASR
++faster-whisper
+diff --git a/app/frontend/index.html b/app/frontend/index.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..f1084b6d20b7dfc28baf307a9db3dd87b75cd231
+--- /dev/null
++++ b/app/frontend/index.html
+@@ -0,0 +1,12 @@
++<!doctype html>
++<html lang="en">
++  <head>
++    <meta charset="UTF-8" />
++    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++    <title>CLEARCOMMS</title>
++  </head>
++  <body>
++    <div id="root"></div>
++    <script type="module" src="/src/main.jsx"></script>
++  </body>
++</html>
+diff --git a/app/frontend/package.json b/app/frontend/package.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..f831f3df8631d88273682d6810de408cdfec9dcf
+--- /dev/null
++++ b/app/frontend/package.json
+@@ -0,0 +1,19 @@
++{
++  "name": "clearcomms-ui",
++  "private": true,
++  "version": "1.0.0",
++  "type": "module",
++  "scripts": {
++    "dev": "vite",
++    "build": "vite build",
++    "preview": "vite preview"
++  },
++  "dependencies": {
++    "react": "^18.3.1",
++    "react-dom": "^18.3.1"
++  },
++  "devDependencies": {
++    "@vitejs/plugin-react": "^4.3.3",
++    "vite": "^5.4.10"
++  }
++}
+diff --git a/app/frontend/src/App.jsx b/app/frontend/src/App.jsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..cd415b8d281ede83ff95f524462d83ba734d70cb
+--- /dev/null
++++ b/app/frontend/src/App.jsx
+@@ -0,0 +1,67 @@
++import { useState } from 'react'
++
++export function App() {
++  const [file, setFile] = useState(null)
++  const [loading, setLoading] = useState(false)
++  const [result, setResult] = useState(null)
++  const [error, setError] = useState('')
++
++  const onSubmit = async (e) => {
++    e.preventDefault()
++    if (!file) return
++
++    setLoading(true)
++    setError('')
++    setResult(null)
++
++    try {
++      const body = new FormData()
++      body.append('file', file)
++      const res = await fetch('http://localhost:8000/api/process', {
++        method: 'POST',
++        body
++      })
++
++      if (!res.ok) {
++        throw new Error(`Server returned ${res.status}`)
++      }
++
++      setResult(await res.json())
++    } catch (err) {
++      setError(err.message)
++    } finally {
++      setLoading(false)
++    }
++  }
++
++  return (
++    <main className="layout">
++      <h1>CLEARCOMMS — React Console</h1>
++      <p>Upload radio audio, then run the on-device Whisper → Llama → TTS pipeline.</p>
++
++      <form className="panel" onSubmit={onSubmit}>
++        <input type="file" accept=".wav,.flac,.mp3" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
++        <button type="submit" disabled={!file || loading}>{loading ? 'Processing…' : 'Process transmission'}</button>
++      </form>
++
++      {error && <div className="error">{error}</div>}
++
++      {result && (
++        <section className="grid">
++          <article className="panel">
++            <h2>Transcript</h2>
++            <p>{result.transcript}</p>
++          </article>
++          <article className="panel">
++            <h2>Incident JSON</h2>
++            <pre>{JSON.stringify(result.incident, null, 2)}</pre>
++          </article>
++          <article className="panel">
++            <h2>TTS Response</h2>
++            <p>{result.tts_text}</p>
++          </article>
++        </section>
++      )}
++    </main>
++  )
++}
+diff --git a/app/frontend/src/main.jsx b/app/frontend/src/main.jsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..19ffac061eaa17a086e19c3bfb55adf75caf8d0c
+--- /dev/null
++++ b/app/frontend/src/main.jsx
+@@ -0,0 +1,10 @@
++import React from 'react'
++import { createRoot } from 'react-dom/client'
++import { App } from './App'
++import './styles.css'
++
++createRoot(document.getElementById('root')).render(
++  <React.StrictMode>
++    <App />
++  </React.StrictMode>
++)
+diff --git a/app/frontend/src/styles.css b/app/frontend/src/styles.css
+new file mode 100644
+index 0000000000000000000000000000000000000000..597fdeec2526d294443f2e6bf9cf00b464e2ef28
+--- /dev/null
++++ b/app/frontend/src/styles.css
+@@ -0,0 +1,43 @@
++:root {
++  font-family: Inter, system-ui, sans-serif;
++  color: #e9eef8;
++  background: #0c1220;
++}
++
++body {
++  margin: 0;
++}
++
++.layout {
++  max-width: 980px;
++  margin: 0 auto;
++  padding: 2rem;
++}
++
++.panel {
++  background: #151f33;
++  border: 1px solid #23314f;
++  border-radius: 10px;
++  padding: 1rem;
++  margin: 1rem 0;
++}
++
++button {
++  margin-left: 1rem;
++  padding: 0.6rem 1rem;
++}
++
++.grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
++  gap: 1rem;
++}
++
++pre {
++  white-space: pre-wrap;
++  word-break: break-word;
++}
++
++.error {
++  color: #ff8f8f;
++}
+diff --git a/app/frontend/vite.config.js b/app/frontend/vite.config.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..6ddd1401ada2812f456d206a8c6220130b347ad2
+--- /dev/null
++++ b/app/frontend/vite.config.js
+@@ -0,0 +1,9 @@
++import { defineConfig } from 'vite'
++import react from '@vitejs/plugin-react'
++
++export default defineConfig({
++  plugins: [react()],
++  server: {
++    port: 5173
++  }
++})
+diff --git a/pipeline/asr.py b/pipeline/asr.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..f395760e7350b84101807f4ee1da87e33484e900
+--- /dev/null
++++ b/pipeline/asr.py
+@@ -0,0 +1,28 @@
++from __future__ import annotations
++
++from pathlib import Path
++from time import perf_counter
++
++
++def transcribe(audio_path: Path, sr: int) -> tuple[str, dict]:
++    start = perf_counter()
++    text = ""
++    engine = "fallback"
++
++    try:
++        from faster_whisper import WhisperModel  # type: ignore
++
++        model = WhisperModel("base", device="cpu", compute_type="int8")
++        segments, info = model.transcribe(str(audio_path), language="en")
++        text = " ".join(seg.text.strip() for seg in segments if seg.text).strip()
++        engine = f"faster-whisper:{getattr(info, 'language', 'en')}"
++    except Exception:
++        text = "[No ASR model installed] Enhanced audio is ready, but transcription requires faster-whisper."
++
++    latency_ms = int((perf_counter() - start) * 1000)
++    return text, {
++        "sample_rate": sr,
++        "engine": engine,
++        "latency_ms": latency_ms,
++        "audio_path": str(audio_path),
++    }
+diff --git a/pipeline/llm.py b/pipeline/llm.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..7e205096d964ee8bd7974e748d504bf1a07bfb43
+--- /dev/null
++++ b/pipeline/llm.py
+@@ -0,0 +1,32 @@
++from __future__ import annotations
++
++from datetime import datetime, timezone
++
++
++def extract_incident(transcript: str) -> tuple[dict, str]:
++    cleaned = transcript.strip()
++
++    if not cleaned or cleaned.startswith("[No ASR model"):
++        incident = {
++            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
++            "priority": "unknown",
++            "summary": "No actionable transcript available.",
++            "location": None,
++            "units": [],
++            "raw_transcript": cleaned,
++        }
++        return incident, "Unable to synthesize dispatch response because transcript was unavailable."
++
++    # Lightweight local fallback; replace with llama.cpp call when model exists.
++    priority = "high" if any(k in cleaned.lower() for k in ["shots", "fire", "officer down", "urgent"]) else "normal"
++
++    incident = {
++        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
++        "priority": priority,
++        "summary": cleaned[:240],
++        "location": None,
++        "units": [],
++        "raw_transcript": cleaned,
++    }
++    tts = f"Copy. Incident logged as {priority} priority. {incident['summary']}"
++    return incident, tts
+diff --git a/pipeline/orchestrator.py b/pipeline/orchestrator.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..b8277f8ae730ce2c8d541627837e6fc670f21007
+--- /dev/null
++++ b/pipeline/orchestrator.py
+@@ -0,0 +1,39 @@
++from __future__ import annotations
++
++from dataclasses import dataclass
++from pathlib import Path
++
++import soundfile as sf
++
++from pipeline.asr import transcribe
++from pipeline.enhance import enhance_audio
++from pipeline.llm import extract_incident
++from pipeline.tts import synthesize
++
++
++@dataclass
++class PipelineResult:
++    transcript: str
++    incident: dict
++    tts_text: str
++    meta: dict
++
++
++def run_pipeline(audio, sr: int, enhanced_path: Path, tts_path: Path) -> PipelineResult:
++    enhanced = enhance_audio(audio, sr)
++    sf.write(str(enhanced_path), enhanced, sr)
++
++    transcript, asr_meta = transcribe(enhanced_path, sr)
++    incident, tts_text = extract_incident(transcript)
++    synthesize(tts_text, tts_path)
++
++    return PipelineResult(
++        transcript=transcript,
++        incident=incident,
++        tts_text=tts_text,
++        meta={
++            "asr": asr_meta,
++            "enhanced_path": str(enhanced_path),
++            "tts_path": str(tts_path),
++        },
++    )
+diff --git a/pipeline/tts.py b/pipeline/tts.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..41ac5f2140631929eeb429779fa56ca0d34e86eb
+--- /dev/null
++++ b/pipeline/tts.py
+@@ -0,0 +1,30 @@
++from __future__ import annotations
++
++import wave
++from pathlib import Path
++
++import numpy as np
++
++
++def synthesize(text: str, out_path: Path, sr: int = 22050) -> Path:
++    try:
++        import pyttsx3  # type: ignore
++
++        engine = pyttsx3.init()
++        engine.save_to_file(text, str(out_path))
++        engine.runAndWait()
++        return out_path
++    except Exception:
++        # Fallback: generate short audible tone so downstream has an artifact.
++        duration = min(max(len(text) / 50.0, 0.5), 3.0)
++        t = np.linspace(0, duration, int(sr * duration), endpoint=False)
++        tone = (0.2 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
++        pcm = (tone * 32767).astype(np.int16)
++
++        with wave.open(str(out_path), "wb") as wf:
++            wf.setnchannels(1)
++            wf.setsampwidth(2)
++            wf.setframerate(sr)
++            wf.writeframes(pcm.tobytes())
++
++        return out_path
+ 
+EOF
+)
