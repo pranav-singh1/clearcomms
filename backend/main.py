@@ -316,8 +316,9 @@ async def api_transcribe(
     do_normalize = normalize.lower() in ("true", "1", "yes")
     is_mic = source.lower() == "mic"
     raw_intensity = max(0.0, min(100.0, float(radio_intensity)))
-    # Map 50 -> 0.0 (no change), 100 -> 0.7 (toned-down max effect).
-    intensity = max(0.0, (raw_intensity - 50.0) / 50.0) * 0.7
+    # Map 50 -> 0.0 (no change), 100 -> 0.8 (slightly stronger max effect).
+    t = max(0.0, (raw_intensity - 50.0) / 50.0)
+    intensity = (t ** 0.8) * 0.8
 
     suffix = Path(file.filename or "audio.wav").suffix or ".wav"
     if suffix.lower() not in (".wav", ".flac", ".ogg", ".mp3", ".m4a"):

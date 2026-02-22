@@ -65,7 +65,11 @@ export function Controls({
           <div className="flex justify-between items-center">
             <span className="text-xs text-defense-muted uppercase tracking-widest">Radio Intensity</span>
             <span className="text-xs text-defense-accent font-mono tabular-nums">
-              {radioIntensity === 50 ? "BASELINE" : radioIntensity < 50 ? `MILD (${radioIntensity})` : `HEAVY (${radioIntensity})`}
+              {radioIntensity <= 50
+                ? "NONE"
+                : radioIntensity < 80
+                ? `MEDIUM (${radioIntensity})`
+                : `HIGH (${radioIntensity})`}
             </span>
           </div>
           <input
@@ -77,9 +81,9 @@ export function Controls({
             className="w-full h-1 appearance-none bg-defense-border accent-defense-accent cursor-pointer"
           />
           <div className="flex justify-between text-[10px] text-defense-muted font-mono">
-            <span>MILD</span>
-            <span>BASELINE</span>
-            <span>HEAVY</span>
+            <span>NONE</span>
+            <span>MEDIUM</span>
+            <span>HIGH</span>
           </div>
         </div>
       )}
