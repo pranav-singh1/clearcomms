@@ -63,22 +63,69 @@ def run_streamlit_app() -> None:
             )
         st.caption("Config: model/config.yaml")
 
-    uploaded = st.file_uploader(
-        "Upload an audio clip (WAV recommended).",
-        type=["wav", "flac", "ogg", "mp3", "m4a"],
+    st.subheader("Input source")
+    source_mode = st.radio(
+        "Choose input type",
+        ["Upload file", "Record microphone", "Repo demo clip"],
+        horizontal=True,
     )
 
-    if not uploaded:
-        st.info(
-            "Upload a clip to run: upload → (optional) radio preprocess → Whisper → transcript. "
-            "Everything runs locally on the laptop."
-        )
-        return
+    uploaded = None
+    recorded = None
+    input_path: Path | None = None
+    input_bytes: bytes | None = None
+    input_label = ""
+    cleanup_input = False
 
-    suffix = Path(uploaded.name).suffix or ".wav"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
-        tf.write(uploaded.read())
-        input_path = Path(tf.name)
+    if source_mode == "Upload file":
+        uploaded = st.file_uploader(
+            "Upload an audio clip (WAV recommended).",
+            type=["wav", "flac", "ogg", "mp3", "m4a"],
+        )
+        if not uploaded:
+            st.info("Upload a clip to run: source -> preprocess -> Whisper -> transcript.")
+            return
+
+        suffix = Path(uploaded.name).suffix or ".wav"
+        input_bytes = uploaded.getvalue()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
+            tf.write(input_bytes)
+            input_path = Path(tf.name)
+        input_label = uploaded.name
+        cleanup_input = True
+
+    elif source_mode == "Record microphone":
+        recorded = st.audio_input("Record audio from your microphone")
+        if recorded:
+            st.caption("Mic preview")
+            st.audio(recorded)
+        if not recorded:
+            st.info("Record audio to run the full pipeline.")
+            return
+
+        input_bytes = recorded.getvalue()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tf:
+            tf.write(input_bytes)
+            input_path = Path(tf.name)
+        input_label = "mic_recording.wav"
+        cleanup_input = True
+
+    else:
+        demo_dir = _ROOT / "radio_dispatch_filter" / "radio_audio"
+        demo_files = sorted(demo_dir.glob("*.wav")) if demo_dir.exists() else []
+        if not demo_files:
+            st.warning(f"No demo WAV files found in {demo_dir}")
+            return
+
+        picked = st.selectbox("Pick a demo radio clip", [p.name for p in demo_files], index=0)
+        input_path = demo_dir / picked
+        input_bytes = input_path.read_bytes()
+        input_label = picked
+        cleanup_input = False
+
+    if input_path is None:
+        st.error("No input selected.")
+        return
 
     tmp_dir = Path("runs")
     tmp_dir.mkdir(exist_ok=True)
@@ -100,9 +147,10 @@ def run_streamlit_app() -> None:
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        st.subheader("Original upload")
-        st.audio(input_path.read_bytes())
+        st.subheader("Original input")
+        st.audio(input_bytes if input_bytes is not None else input_path.read_bytes())
         st.caption(f"Loaded: {sr} Hz, {len(audio)/max(sr,1):.2f}s")
+        st.caption(f"Source: {source_mode} | {input_label}")
 
         st.subheader("Prepared (16 kHz mono)")
         st.audio(pre16_path.read_bytes())
@@ -147,6 +195,7 @@ def run_streamlit_app() -> None:
             st.write("Tip: add ./models/*.onnx to .gitignore; don’t commit weights.")
 
     try:
-        os.remove(str(input_path))
+        if cleanup_input and input_path and input_path.exists():
+            os.remove(str(input_path))
     except Exception:
         pass
