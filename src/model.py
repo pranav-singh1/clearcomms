@@ -1,90 +1,19 @@
-# ---------------------------------------------------------------------
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
-# SPDX-License-Identifier: BSD-3-Clause
-# ---------------------------------------------------------------------
-import numpy as np
-import onnxruntime
-from qai_hub_models.models._shared.whisper.model import Whisper
+"""
+Whisper model wrapper using openai-whisper (PyTorch).
+Works on Mac (CPU/MPS) without Qualcomm QNN dependencies.
+"""
+import whisper
 
 
-def get_onnxruntime_session_with_qnn_ep(path):
-    options = onnxruntime.SessionOptions()
-    session = onnxruntime.InferenceSession(
-        path,
-        sess_options=options,
-        providers=["QNNExecutionProvider"],
-        provider_options=[
-            {
-                "backend_path": "QnnHtp.dll",
-                "htp_performance_mode": "burst",
-                "high_power_saver": "sustained_high_performance",
-                "enable_htp_fp16_precision": "1",
-                "htp_graph_finalization_optimization_mode": "3",
-            }
-        ],
-    )
-    return session
+_model_cache: dict[str, whisper.Whisper] = {}
 
 
-class ONNXEncoderWrapper:
-    def __init__(self, encoder_path):
-        self.session = get_onnxruntime_session_with_qnn_ep(encoder_path)
-
-    def to(self, *args):
-        return self
-
-    def __call__(self, audio):
-        return self.session.run(None, {"audio": audio})
-
-
-class ONNXDecoderWrapper:
-    def __init__(self, decoder_path):
-        self.session = get_onnxruntime_session_with_qnn_ep(decoder_path)
-
-    def to(self, *args):
-        return self
-
-    def __call__(
-        self, x, index, k_cache_cross, v_cache_cross, k_cache_self, v_cache_self
-    ):
-        return self.session.run(
-            None,
-            {
-                "x": x.astype(np.int32),
-                "index": np.array(index),
-                "k_cache_cross": k_cache_cross,
-                "v_cache_cross": v_cache_cross,
-                "k_cache_self": k_cache_self,
-                "v_cache_self": v_cache_self,
-            },
-        )
-
-class WhisperBaseEnONNX(Whisper):
-    def __init__(self, encoder_path, decoder_path):
-        super().__init__(
-            ONNXEncoderWrapper(encoder_path),
-            ONNXDecoderWrapper(decoder_path),
-            num_decoder_blocks=6,
-            num_heads=8,
-            attention_dim=512,
-        )
-
-class WhisperLargeV3TurboONNX(Whisper):
-    def __init__(self, encoder_path, decoder_path):
-        super().__init__(
-            ONNXEncoderWrapper(encoder_path),
-            ONNXDecoderWrapper(decoder_path),
-            num_decoder_blocks=4,
-            num_heads=20,
-            attention_dim=1280,
-        )
-
-
-def make_whisper_app(encoder_path, decoder_path, variant, cfg):
-    from qai_hub_models.models._shared.whisper.app import WhisperApp
-
-    if variant in ("large_v3_turbo", "large-v3-turbo"):
-        whisper_model = WhisperLargeV3TurboONNX(encoder_path, decoder_path)
-    else:
-        whisper_model = WhisperBaseEnONNX(encoder_path, decoder_path)
-    return WhisperApp(whisper_model)
+def get_whisper_model(variant: str = "base.en") -> whisper.Whisper:
+    """Load (and cache) a Whisper model by variant name."""
+    # Normalize variant names from config format
+    variant = variant.replace("_", ".").replace("-", ".")
+    if variant in _model_cache:
+        return _model_cache[variant]
+    model = whisper.load_model(variant)
+    _model_cache[variant] = model
+    return model

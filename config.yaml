@@ -8,8 +8,6 @@
 "silence_threshold": 0.001    # Threshold for silence detection
 "queue_timeout": 1.0          # Timeout for audio queue operations
 
-# model paths
-"encoder_path": "models/WhisperEncoder.onnx"
-"decoder_path": "models/WhisperDecoder.onnx"
-
-model_variant: "base_en"
+# Whisper model variant (openai-whisper)
+# Options: tiny.en, base.en, small.en, medium.en, large-v3
+model_variant: "base.en"

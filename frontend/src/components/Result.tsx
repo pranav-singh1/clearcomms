@@ -66,16 +66,16 @@ export function Result({
   const canSpeakCleaned =
     !transcriptIsError && transcriptForTts.length > 0 && ttsAvailable && ttsEnabled && !ttsLoading;
   const rawContent = result.error ? `ERR: ${result.error}` : (rawTranscript || "NO TRANSCRIPT_");
-  const llamaError = localRevisionError ?? result.meta?.llama_revision_error;
+  const llamaError = localRevisionError ?? result.meta?.llama_revision_error ?? result.meta?.gemini_revision_error;
   const revisedContent = revisionLoading
     ? "Loading..."
     : revisedTranscript
     ? revisedTranscript
     : typeof llamaError === "string" && llamaError
-    ? `Llama revision failed: ${llamaError}`
+    ? `Gemini revision failed: ${llamaError}`
     : result.llama_revision_available
-    ? "— Waiting for Llama..."
-    : "— Llama revision not run (set ENABLE_LLAMA_REVISION=1 before starting the backend)";
+    ? "— Waiting for Gemini..."
+    : "— Gemini revision not run (set ENABLE_GEMINI_REVISION=1 and GEMINI_API_KEY before starting the backend)";
   const revisedIsError = Boolean(!revisionLoading && revisedTranscript === "" && llamaError);
 
   // Simulated structured data based on the prompt "Cleaned transcript, Structured JSON output"
@@ -314,12 +314,12 @@ export function Result({
             </div>
           </div>
           <div>
-            <div className="border-b border-defense-border pb-2 mb-2 font-mono text-xs text-white uppercase">Reconstructed transcript (Llama)</div>
+            <div className="border-b border-defense-border pb-2 mb-2 font-mono text-xs text-white uppercase">Reconstructed transcript (Gemini)</div>
             <div className={`font-mono text-sm leading-relaxed p-4 bg-defense-900 border ${revisionLoading ? "border-defense-accent/50 text-defense-muted animate-pulse" : revisedTranscript ? "border-defense-border text-white" : revisedIsError ? "border-amber-900/50 text-amber-300" : "border-defense-border text-defense-muted"}`}>
               {revisedContent}
             </div>
             {!revisionLoading && revisedTranscript && (
-              <div className="mt-1 text-xs font-mono text-green-500/90">Llama revision applied.</div>
+              <div className="mt-1 text-xs font-mono text-green-500/90">Gemini revision applied.</div>
             )}
           </div>
           {realtimeTtsEnabled && (

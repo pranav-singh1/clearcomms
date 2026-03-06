@@ -1,19 +1,17 @@
 """
-Llama 3 formatted prompts for transcript analysis (action items + optional reconstruction).
+Prompts for transcript revision via Gemini API.
 """
 
 
-def build_revision_prompt(transcript: str) -> str:
+def build_revision_prompt(transcript: str) -> tuple[str, str]:
     """
-    Build a Llama 3 chat-formatted prompt for extracting action items and suggested
-    actions from a radio/dispatch transcript. If the transcript seems like nonsense,
-    suggest reconstruction instead.
+    Build a system prompt and user prompt for revising a noisy radio transcript.
 
     Args:
         transcript: Raw transcript string from ASR.
 
     Returns:
-        Full prompt string in Llama 3 format.
+        (system_prompt, user_prompt) tuple.
     """
     system = (
         "You are an AI assistant for first responders. Your ONLY job is to rewrite a noisy "
@@ -39,18 +37,7 @@ def build_revision_prompt(transcript: str) -> str:
         "- Use [unclear: ...] for large unclear spans.\n"
         "- Do NOT say 'unusable' or suggest actions; no commentary.\n"
     )
-    # Llama 3 chat format matching Genie: begin_of_text, then system/user/assistant
-    parts = [
-        "<|begin_of_text|>",
-        "<|start_header_id|>system<|end_header_id|>",
-        "",
-        system,
-        "<|eot_id|>",
-        "<|start_header_id|>user<|end_header_id|>",
-        "",
-        transcript.strip(),
-        "<|eot_id|>",
-        "<|start_header_id|>assistant<|end_header_id|>",
-        "",
-    ]
-    return "\n".join(parts)
+
+    user = transcript.strip()
+
+    return system, user

@@ -94,9 +94,8 @@ def _tts_cache_set(key: str, audio_bytes: bytes) -> None:
             _TTS_CACHE.popitem(last=False)
 
 def _model_files_present() -> bool:
-    enc = _ROOT / "models" / "WhisperEncoder.onnx"
-    dec = _ROOT / "models" / "WhisperDecoder.onnx"
-    return enc.exists() and dec.exists()
+    # openai-whisper downloads models automatically; always available
+    return True
 
 
 @app.get("/api/model-status")
@@ -369,7 +368,10 @@ async def api_transcribe(
             audio_filtered_b64 = base64.b64encode(filt_path.read_bytes()).decode("utf-8")
 
         duration_sec = round(len(audio) / max(sr, 1), 2)
-        llama_revision_available = os.getenv("ENABLE_LLAMA_REVISION", "").strip() == "1"
+        llama_revision_available = (
+            os.getenv("ENABLE_GEMINI_REVISION", "").strip() == "1"
+            or os.getenv("ENABLE_LLAMA_REVISION", "").strip() == "1"
+        )
         payload = {
             "success": True,
             "error": None,
@@ -396,7 +398,7 @@ async def api_transcribe(
             payload["cleaned_transcript"] = raw_text
             payload["meta"] = {**meta, "ui_total_ms": round(ui_total_ms, 1)}
             if llama_revision_available:
-                print("[Llama] Revision available; frontend will request via /api/revise.", flush=True)
+                print("[Gemini] Revision available; frontend will request via /api/revise.", flush=True)
         except FileNotFoundError as e:
             payload["success"] = False
             payload["error"] = "ONNX encoder/decoder not found. Place WhisperEncoder.onnx and WhisperDecoder.onnx in models/."
@@ -416,12 +418,16 @@ async def api_transcribe(
 
 @app.post("/api/revise")
 def api_revise(payload: ReviseRequest):
-    """Run Llama revision on a transcript. Called by frontend after transcribe returns."""
+    """Run Gemini revision on a transcript. Called by frontend after transcribe returns."""
     transcript = (payload.transcript or "").strip()
     if not transcript:
         raise HTTPException(400, "transcript is required")
-    if os.getenv("ENABLE_LLAMA_REVISION", "").strip() != "1":
-        raise HTTPException(503, "Llama revision is not enabled (ENABLE_LLAMA_REVISION=1).")
+    gemini_enabled = (
+        os.getenv("ENABLE_GEMINI_REVISION", "").strip() == "1"
+        or os.getenv("ENABLE_LLAMA_REVISION", "").strip() == "1"
+    )
+    if not gemini_enabled:
+        raise HTTPException(503, "Gemini revision is not enabled (set ENABLE_GEMINI_REVISION=1).")
     try:
         from llama_on_device import revise_transcript
         revised = revise_transcript(transcript)

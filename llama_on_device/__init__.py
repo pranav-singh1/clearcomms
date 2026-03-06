@@ -1,5 +1,5 @@
 """
-On-device Llama revision via Qualcomm Genie (genie-t2t-run.exe).
+Transcript revision via Google Gemini API.
 Optional post-processing for Whisper transcripts: clean noisy radio/dispatch text.
 """
 
