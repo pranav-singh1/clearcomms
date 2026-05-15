@@ -1,3 +1,6 @@
+<img width="1097" height="628" alt="Screenshot 2026-05-15 at 12 57 43 PM" src="https://github.com/user-attachments/assets/577b8201-4f09-42c9-a98a-e81755cb26de" />
+
+
 # ClearComms
 
 **Fully offline AI that converts noisy radio communication into accurate transcripts and structured incident summaries.** Optimized to run locally on Qualcomm AI laptops with no internet connection.
